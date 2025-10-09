@@ -57,8 +57,11 @@ async function ensureGeojsonLayers(map: maplibregl.Map) {
 		cluster: true,
 		clusterMaxZoom: 17,
 		clusterRadius: 20,
-	} as any);
-
+		maxzoom: 17,          // zoom máx. de teselado del GeoJSON
+        buffer: 32,           // ↓ buffer de tesela (por defecto 128)
+        tolerance: 0.25,      // simplificación ligera
+    } as any);
+	
 	map.addLayer({
 		id: LAYER_CLUSTERED_CIRCLE,
 		type: "circle",
