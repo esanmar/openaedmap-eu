@@ -6,7 +6,6 @@ import maplibregl, {
   type MapGeoJSONFeature,
   type MapMouseEvent,
 } from "maplibre-gl";
-
 import "maplibre-gl/dist/maplibre-gl.css";
 import { type FC, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -38,7 +37,7 @@ import SidebarLeft from "./sidebar-left";
 
 /** === Config GeoJSON local === */
 const GEOJSON_SOURCE_ID = "aed-geojson";
-const GEOJSON_URL = "/data/EU.geojson"; // tu archivo: https://openaedmap-eu.vercel.app/data/EU.geojson
+const GEOJSON_URL = "/data/EU.geojson"; // tu archivo (ej.: https://openaedmap-eu.vercel.app/data/EU.geojson)
 
 /** Guards para evitar 'Source already exists' y cachear datos */
 const injectingRef = { current: false } as { current: boolean };
@@ -133,102 +132,101 @@ async function loadAndTransformEUGeojson(): Promise<GeoJSON.FeatureCollection> {
       } as GeoJSON.Feature;
     });
   geojsonDataRef.current = { type: "FeatureCollection", features };
+  console.log("[EU.geojson] features:", features.length);
   return geojsonDataRef.current;
 }
 
-/** Inyecta fuente/capas; idempotente y segura ante recargas de estilo */
+/** Inyecta fuente/capas; sustituye las del estilo y evita duplicados */
 async function ensureGeojsonLayers(map: maplibregl.Map) {
   if (injectingRef.current) return;
   injectingRef.current = true;
   try {
     const data = await loadAndTransformEUGeojson();
 
-    // Fuente: crear si no existe; si existe, actualizar
-    const src = map.getSource(GEOJSON_SOURCE_ID) as any;
-    if (src && typeof src.setData === "function") {
-      src.setData(data);
-    } else if (!src) {
-      map.addSource(GEOJSON_SOURCE_ID, {
-        type: "geojson",
-        data,
-        cluster: true,
-        clusterMaxZoom: 14,
-        clusterRadius: 50,
-      } as any);
+    // 1) QUITAR capas originales del estilo (las que usan los mismos IDs)
+    for (const id of [
+      LAYER_UNCLUSTERED,
+      LAYER_UNCLUSTERED_LOW_ZOOM,
+      LAYER_CLUSTERED_CIRCLE,
+      LAYER_CLUSTERED_CIRCLE_LOW_ZOOM,
+    ]) {
+      if (map.getLayer(id)) map.removeLayer(id);
     }
+    if (map.getSource(GEOJSON_SOURCE_ID)) map.removeSource(GEOJSON_SOURCE_ID);
 
-    // Capas: crear solo si faltan (respetando IDs de tu app)
-    if (!map.getLayer(LAYER_CLUSTERED_CIRCLE)) {
-      map.addLayer({
-        id: LAYER_CLUSTERED_CIRCLE,
-        type: "circle",
-        source: GEOJSON_SOURCE_ID,
-        filter: ["has", "point_count"],
-        paint: {
-          "circle-color": [
-            "step",
-            ["get", "point_count"],
-            "#88b04b",
-            10, "#f1c40f",
-            50, "#e74c3c",
-          ],
-          "circle-radius": [
-            "step",
-            ["get", "point_count"],
-            14,
-            10, 20,
-            50, 28,
-          ],
-          "circle-stroke-width": 2,
-          "circle-stroke-color": "#ffffff",
-        },
-      });
-    }
+    // 2) AÑADIR tu fuente con clustering
+    map.addSource(GEOJSON_SOURCE_ID, {
+      type: "geojson",
+      data,
+      cluster: true,
+      clusterMaxZoom: 14,
+      clusterRadius: 50,
+    } as any);
 
-    if (!map.getLayer(LAYER_CLUSTERED_CIRCLE_LOW_ZOOM)) {
-      map.addLayer({
-        id: LAYER_CLUSTERED_CIRCLE_LOW_ZOOM,
-        type: "circle",
-        source: GEOJSON_SOURCE_ID,
-        filter: ["has", "point_count"],
-        paint: {
-          "circle-color": "#88b04b",
-          "circle-radius": 10,
-          "circle-stroke-width": 1.5,
-          "circle-stroke-color": "#ffffff",
-        },
-      });
-    }
+    // 3) AÑADIR tus capas con los mismos IDs que usa la app
+    map.addLayer({
+      id: LAYER_CLUSTERED_CIRCLE,
+      type: "circle",
+      source: GEOJSON_SOURCE_ID,
+      filter: ["has", "point_count"],
+      paint: {
+        "circle-color": [
+          "step",
+          ["get", "point_count"],
+          "#88b04b",
+          10, "#f1c40f",
+          50, "#e74c3c",
+        ],
+        "circle-radius": [
+          "step",
+          ["get", "point_count"],
+          14,
+          10, 20,
+          50, 28,
+        ],
+        "circle-stroke-width": 2,
+        "circle-stroke-color": "#ffffff",
+      },
+    });
 
-    if (!map.getLayer(LAYER_UNCLUSTERED)) {
-      map.addLayer({
-        id: LAYER_UNCLUSTERED,
-        type: "circle",
-        source: GEOJSON_SOURCE_ID,
-        filter: ["!", ["has", "point_count"]],
-        paint: {
-          "circle-radius": 7,
-          "circle-color": "#e81224",
-          "circle-stroke-width": 2,
-          "circle-stroke-color": "#ffffff",
-        },
-      });
-    }
+    map.addLayer({
+      id: LAYER_CLUSTERED_CIRCLE_LOW_ZOOM,
+      type: "circle",
+      source: GEOJSON_SOURCE_ID,
+      filter: ["has", "point_count"],
+      paint: {
+        "circle-color": "#88b04b",
+        "circle-radius": 10,
+        "circle-stroke-width": 1.5,
+        "circle-stroke-color": "#ffffff",
+      },
+    });
 
-    if (!map.getLayer(LAYER_UNCLUSTERED_LOW_ZOOM)) {
-      map.addLayer({
-        id: LAYER_UNCLUSTERED_LOW_ZOOM,
-        type: "circle",
-        source: GEOJSON_SOURCE_ID,
-        filter: ["!", ["has", "point_count"]],
-        paint: {
-          "circle-radius": 5,
-          "circle-color": "#e81224",
-          "circle-stroke-width": 1.5,
-          "circle-stroke-color": "#ffffff",
-        },
-      });
-    }
+    map.addLayer({
+      id: LAYER_UNCLUSTERED,
+      type: "circle",
+      source: GEOJSON_SOURCE_ID,
+      filter: ["!", ["has", "point_count"]],
+      paint: {
+        "circle-radius": 7,
+        "circle-color": "#e81224",
+        "circle-stroke-width": 2,
+        "circle-stroke-color": "#ffffff",
+      },
+    });
+
+    map.addLayer({
+      id: LAYER_UNCLUSTERED_LOW_ZOOM,
+      type: "circle",
+      source: GEOJSON_SOURCE_ID,
+      filter: ["!", ["has", "point_count"]],
+      paint: {
+        "circle-radius": 5,
+        "circle-color": "#e81224",
+        "circle-stroke-width": 1.5,
+        "circle-stroke-color": "#ffffff",
+      },
+    });
   } finally {
     injectingRef.current = false;
   }
@@ -370,6 +368,16 @@ const MapView: FC<MapViewProps> = ({ openChangesetId, setOpenChangesetId }) => {
       attributionControl: false,
     });
 
+    // 🔧 Evita error "Image 'marker_'" inyectando 1x1 transparente para cualquier imagen faltante
+    map.on("styleimagemissing", (e) => {
+      if (map.hasImage(e.id)) return;
+      const c = document.createElement("canvas");
+      c.width = c.height = 1;
+      const ctx = c.getContext("2d");
+      if (ctx) ctx.clearRect(0, 0, 1, 1);
+      map.addImage(e.id, c);
+    });
+
     map.addControl(new maplibregl.AttributionControl({ customAttribution: "" }));
     addMaplibreGeocoder(map);
     mapRef.current = map;
@@ -378,13 +386,13 @@ const MapView: FC<MapViewProps> = ({ openChangesetId, setOpenChangesetId }) => {
     map.dragRotate.disable();
     map.touchZoomRotate.disableRotation();
     map.keyboard.disableRotation();
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), controlsLocation);
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
     map.addControl(
       new maplibregl.GeolocateControl({
         positionOptions: { enableHighAccuracy: true },
         fitBoundsOptions: { animate: false },
       }),
-      controlsLocation,
+      "bottom-right",
     );
 
     // Inyecta capa EU en load y cuando el estilo cambie
