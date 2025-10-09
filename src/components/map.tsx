@@ -37,7 +37,10 @@ import SidebarLeft from "./sidebar-left";
 
 /** === Config GeoJSON local === */
 const GEOJSON_SOURCE_ID = "aed-geojson";
-const GEOJSON_URL = "/data/EU.geojson"; // tu archivo (ej.: https://openaedmap-eu.vercel.app/data/EU.geojson)
+const GEOJSON_URL = "/data/EU.geojson"; // ej.: https://openaedmap-eu.vercel.app/data/EU.geojson
+
+/** Capa de texto para conteo de clúster */
+const LAYER_CLUSTER_COUNT = "aed-cluster-count";
 
 /** Guards para evitar 'Source already exists' y cachear datos */
 const injectingRef = { current: false } as { current: boolean };
@@ -127,7 +130,7 @@ async function loadAndTransformEUGeojson(): Promise<GeoJSON.FeatureCollection> {
         geometry: f.geometry,
         properties: {
           ...props,
-          name: props.organismo, // alias útil si más adelante se usa
+          name: props.organismo, // alias opcional
         },
       } as GeoJSON.Feature;
     });
@@ -143,24 +146,25 @@ async function ensureGeojsonLayers(map: maplibregl.Map) {
   try {
     const data = await loadAndTransformEUGeojson();
 
-    // 1) QUITAR capas originales del estilo (las que usan los mismos IDs)
+    // 1) QUITAR capas originales del estilo (IDs que usa la app)
     for (const id of [
       LAYER_UNCLUSTERED,
       LAYER_UNCLUSTERED_LOW_ZOOM,
       LAYER_CLUSTERED_CIRCLE,
       LAYER_CLUSTERED_CIRCLE_LOW_ZOOM,
+      LAYER_CLUSTER_COUNT, // por si ya existiera
     ]) {
       if (map.getLayer(id)) map.removeLayer(id);
     }
     if (map.getSource(GEOJSON_SOURCE_ID)) map.removeSource(GEOJSON_SOURCE_ID);
 
-    // 2) AÑADIR tu fuente con clustering
+    // 2) AÑADIR tu fuente con clustering suavizado
     map.addSource(GEOJSON_SOURCE_ID, {
       type: "geojson",
       data,
       cluster: true,
-      clusterMaxZoom: 14,
-      clusterRadius: 50,
+      clusterMaxZoom: 18, // más alto => se desagrupa antes
+      clusterRadius: 25,  // más bajo => grupos más pequeños
     } as any);
 
     // 3) AÑADIR tus capas con los mismos IDs que usa la app
@@ -187,6 +191,22 @@ async function ensureGeojsonLayers(map: maplibregl.Map) {
         "circle-stroke-width": 2,
         "circle-stroke-color": "#ffffff",
       },
+    });
+
+    // Capa de conteo de clúster (texto)
+    map.addLayer({
+      id: LAYER_CLUSTER_COUNT,
+      type: "symbol",
+      source: GEOJSON_SOURCE_ID,
+      filter: ["has", "point_count"],
+      layout: {
+        "text-field": ["get", "point_count"],
+        "text-size": 12,
+        "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
+        "text-offset": [0, 0.3],
+        "text-anchor": "top",
+      },
+      paint: { "text-color": "#000" },
     });
 
     map.addLayer({
@@ -368,14 +388,13 @@ const MapView: FC<MapViewProps> = ({ openChangesetId, setOpenChangesetId }) => {
       attributionControl: false,
     });
 
-    // 🔧 Evita error "Image 'marker_'" inyectando 1x1 transparente para cualquier imagen faltante
+    // Handler robusto: imagen 1x1 transparente para cualquier icono faltante
     map.on("styleimagemissing", (e) => {
       if (map.hasImage(e.id)) return;
-      const c = document.createElement("canvas");
-      c.width = c.height = 1;
-      const ctx = c.getContext("2d");
-      if (ctx) ctx.clearRect(0, 0, 1, 1);
-      map.addImage(e.id, c);
+      // 1x1 transparente usando ImageData evita "mismatched image size"
+      // @ts-ignore
+      const img = new ImageData(new Uint8ClampedArray(4), 1, 1);
+      map.addImage(e.id, img, { sdf: false });
     });
 
     map.addControl(new maplibregl.AttributionControl({ customAttribution: "" }));
@@ -402,6 +421,7 @@ const MapView: FC<MapViewProps> = ({ openChangesetId, setOpenChangesetId }) => {
     for (const layer of [
       LAYER_CLUSTERED_CIRCLE,
       LAYER_UNCLUSTERED,
+      LAYER_CLUSTER_COUNT,
       LAYER_CLUSTERED_CIRCLE_LOW_ZOOM,
       LAYER_UNCLUSTERED_LOW_ZOOM,
     ]) {
