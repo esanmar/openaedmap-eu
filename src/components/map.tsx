@@ -114,9 +114,9 @@ async function ensureGeojsonLayers(map: maplibregl.Map) {
     type: "geojson",
     data, // 👈 objeto, no URL
     cluster: true,
-    clusterMaxZoom: 16, // < maxzoom
-    maxzoom: 17, // > clusterMaxZoom
-    clusterRadius: 20,
+    clusterMaxZoom: 15, // < maxzoom
+    maxzoom: 16, // > clusterMaxZoom
+    clusterRadius: 15,
     buffer: 32, // reduce riesgo "Geometry exceeds allowed extent"
     tolerance: 0.25,
   } as any);
