@@ -37,7 +37,7 @@ import SidebarLeft from "./sidebar-left";
 
 /* ✅ Ruta a tu GeoJSON transformado */
 const GEOJSON_SOURCE_ID = "aed-geojson";
-const GEOJSON_URL = "/data/EU_osm.geojson";
+const GEOJSON_URL = "/data/EU_osm.geojson?v=3";
 
 /* Añade tus datos como capa base */
 async function ensureGeojsonLayers(map: maplibregl.Map) {
@@ -55,7 +55,7 @@ async function ensureGeojsonLayers(map: maplibregl.Map) {
 		type: "geojson",
 		data: GEOJSON_URL,
 		cluster: true,
-		clusterMaxZoom: 17,
+		clusterMaxZoom: 16,
 		clusterRadius: 20,
 		maxzoom: 17,          // zoom máx. de teselado del GeoJSON
         buffer: 32,           // ↓ buffer de tesela (por defecto 128)
