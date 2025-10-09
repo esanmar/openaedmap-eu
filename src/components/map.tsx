@@ -6,6 +6,7 @@ import maplibregl, {
   type MapGeoJSONFeature,
   type MapMouseEvent,
 } from "maplibre-gl";
+
 import "maplibre-gl/dist/maplibre-gl.css";
 import { type FC, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
