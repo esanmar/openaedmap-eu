@@ -55,8 +55,8 @@ async function ensureGeojsonLayers(map: maplibregl.Map) {
 		type: "geojson",
 		data: GEOJSON_URL,
 		cluster: true,
-		clusterMaxZoom: 18,
-		clusterRadius: 25,
+		clusterMaxZoom: 17,
+		clusterRadius: 20,
 	} as any);
 
 	map.addLayer({
