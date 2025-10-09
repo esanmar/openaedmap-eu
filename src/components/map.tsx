@@ -35,13 +35,12 @@ import mapStyle, {
 } from "./map_style";
 import SidebarLeft from "./sidebar-left";
 
-/* === AÑADIDO: constantes y helper para usar tu GeoJSON como fuente por defecto === */
+/* ✅ Ruta a tu GeoJSON transformado */
 const GEOJSON_SOURCE_ID = "aed-geojson";
-// Usa tu archivo convertido a formato OSM-like si lo tienes; si no, apunta a /data/EU.geojson
 const GEOJSON_URL = "/data/EU_osm.geojson";
 
+/* Añade tus datos como capa base */
 async function ensureGeojsonLayers(map: maplibregl.Map) {
-	// quitar posibles capas existentes con los mismos IDs del style base
 	for (const id of [
 		LAYER_UNCLUSTERED,
 		LAYER_UNCLUSTERED_LOW_ZOOM,
@@ -52,7 +51,6 @@ async function ensureGeojsonLayers(map: maplibregl.Map) {
 	}
 	if (map.getSource(GEOJSON_SOURCE_ID)) map.removeSource(GEOJSON_SOURCE_ID);
 
-	// añadir tu fuente con clustering
 	map.addSource(GEOJSON_SOURCE_ID, {
 		type: "geojson",
 		data: GEOJSON_URL,
@@ -61,7 +59,6 @@ async function ensureGeojsonLayers(map: maplibregl.Map) {
 		clusterRadius: 25,
 	} as any);
 
-	// recrear capas con los mismos IDs que usa la app
 	map.addLayer({
 		id: LAYER_CLUSTERED_CIRCLE,
 		type: "circle",
@@ -130,7 +127,6 @@ async function ensureGeojsonLayers(map: maplibregl.Map) {
 		},
 	});
 
-	// mover arriba del todo por si alguna capa del style las tapa
 	const top = map.getStyle().layers?.slice(-1)[0]?.id;
 	if (top) {
 		for (const id of [
@@ -143,7 +139,6 @@ async function ensureGeojsonLayers(map: maplibregl.Map) {
 		}
 	}
 }
-/* === FIN AÑADIDO === */
 
 function fillSidebarWithOsmDataAndShow(
 	nodeId: string,
@@ -158,7 +153,6 @@ function fillSidebarWithOsmDataAndShow(
 		if (data) {
 			const zoomLevelForDetailedView = 17;
 			const currentZoomLevel = mapInstance.getZoom();
-			// todo: possibly add handling of request error which will cause lnglat to be NaN, NaN
 			if (currentZoomLevel < zoomLevelForDetailedView) {
 				if (jumpInsteadOfEaseTo) {
 					mapInstance.jumpTo({
@@ -264,9 +258,8 @@ const MapView: FC<MapViewProps> = ({ openChangesetId, setOpenChangesetId }) => {
 		removeNodeIdFromHash();
 		setSidebarData(null);
 		setSidebarAction(SidebarAction.addNode);
-		setSidebarLeftShown(!mobile); // for mobile hide sidebar so marker is visible
+		setSidebarLeftShown(!mobile);
 		setFooterButtonType(mobile ? ButtonsType.MobileAddAed : ButtonsType.None);
-		// add marker
 		const markerColour = "#e81224";
 		const mapCenter = map.getCenter();
 		const initialCoordinates: [number, number] = [mapCenter.lng, mapCenter.lat];
@@ -312,7 +305,7 @@ const MapView: FC<MapViewProps> = ({ openChangesetId, setOpenChangesetId }) => {
 
 	useEffect(() => {
 		if (mapContainer.current === null) return;
-		if (mapRef.current !== null) return; // stops map from initializing more than once
+		if (mapRef.current !== null) return;
 		const map = new maplibregl.Map({
 			container: mapContainer.current,
 			hash: locationParameter,
@@ -325,29 +318,19 @@ const MapView: FC<MapViewProps> = ({ openChangesetId, setOpenChangesetId }) => {
 			attributionControl: false,
 		});
 
-		/* === AÑADIDO: imagen 1x1 para cubrir sprites faltantes (marker_, etc.) === */
 		map.on("styleimagemissing", (e) => {
 			if (map.hasImage(e.id)) return;
-			// @ts-ignore - ImageData disponible en browsers
+			// @ts-ignore
 			const img = new ImageData(new Uint8ClampedArray(4), 1, 1);
 			map.addImage(e.id, img, { sdf: false });
 		});
-		/* === FIN AÑADIDO === */
 
-		map.addControl(
-			new maplibregl.AttributionControl({
-				customAttribution: "",
-			}),
-		);
+		map.addControl(new maplibregl.AttributionControl({ customAttribution: "" }));
 		addMaplibreGeocoder(map);
 		mapRef.current = map;
-		// how fast mouse scroll wheel zooms
 		map.scrollZoom.setWheelZoomRate(1);
-		// disable map rotation using right click + drag
 		map.dragRotate.disable();
-		// disable map rotation using touch rotation gesture
 		map.touchZoomRotate.disableRotation();
-		// disable map rotation using shift + arrows
 		map.keyboard.disableRotation();
 		map.addControl(
 			new maplibregl.NavigationControl({
@@ -357,15 +340,14 @@ const MapView: FC<MapViewProps> = ({ openChangesetId, setOpenChangesetId }) => {
 		);
 		map.addControl(
 			new maplibregl.GeolocateControl({
-				positionOptions: {
-					enableHighAccuracy: true,
-				},
-				fitBoundsOptions: {
-					animate: false,
-				},
+				positionOptions: { enableHighAccuracy: true },
+				fitBoundsOptions: { animate: false },
 			}),
 			controlsLocation,
 		);
+
+		map.on("load", () => ensureGeojsonLayers(map).catch(console.error));
+		map.on("styledata", () => ensureGeojsonLayers(map).catch(console.error));
 
 		for (const layer of [
 			LAYER_CLUSTERED_CIRCLE,
@@ -414,11 +396,9 @@ const MapView: FC<MapViewProps> = ({ openChangesetId, setOpenChangesetId }) => {
 			}
 		}
 
-		// show sidebar on single element click
 		map.on("click", LAYER_UNCLUSTERED, showObjectWithProperties);
 		map.on("click", LAYER_UNCLUSTERED_LOW_ZOOM, showObjectWithProperties);
 
-		// if direct link to osm node then get its data and zoom in
 		const newParamsFromHash = parseParametersFromUrl();
 		if (newParamsFromHash.node_id && mapRef.current !== null) {
 			fillSidebarWithOsmDataAndShow(
@@ -430,15 +410,6 @@ const MapView: FC<MapViewProps> = ({ openChangesetId, setOpenChangesetId }) => {
 				true,
 			);
 		}
-
-		/* === AÑADIDO: inyectar tu GeoJSON en load y en recargas de estilo === */
-		map.on("load", () => {
-			ensureGeojsonLayers(map).catch(console.error);
-		});
-		map.on("styledata", () => {
-			ensureGeojsonLayers(map).catch(console.error);
-		});
-		/* === FIN AÑADIDO === */
 	}, [
 		latitude,
 		longitude,
@@ -454,7 +425,7 @@ const MapView: FC<MapViewProps> = ({ openChangesetId, setOpenChangesetId }) => {
 		if (mapRef.current === null) return;
 		const map = mapRef.current;
 		addMaplibreGeocoder(map);
-		if (countriesDataLanguage !== language) return; // wait for countries data to be loaded
+		if (countriesDataLanguage !== language) return;
 		map.setStyle(mapStyle(language.toUpperCase(), countriesData));
 	}, [countriesData, countriesDataLanguage, language, addMaplibreGeocoder]);
 
