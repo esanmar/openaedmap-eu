@@ -113,7 +113,7 @@ async function ensureGeojsonLayers(map: maplibregl.Map) {
   map.addSource(GEOJSON_SOURCE_ID, {
     type: "geojson",
     data, // 👈 objeto, no URL
-    cluster: true,
+    cluster: false,
     clusterMaxZoom: 15, // < maxzoom
     maxzoom: 16, // > clusterMaxZoom
     clusterRadius: 15,
