@@ -35,6 +35,9 @@ import mapStyle, {
 } from "./map_style";
 import SidebarLeft from "./sidebar-left";
 
+const GEOJSON_SOURCE_ID = "aed-geojson";
+const GEOJSON_URL = "/data/EU.geojson"; // <-- CAMBIA AQUÍ TU RUTA
+
 function fillSidebarWithOsmDataAndShow(
 	nodeId: string,
 	mapInstance: maplibregl.Map,
@@ -48,7 +51,6 @@ function fillSidebarWithOsmDataAndShow(
 		if (data) {
 			const zoomLevelForDetailedView = 17;
 			const currentZoomLevel = mapInstance.getZoom();
-			// todo: possibly add handling of request error which will cause lnglat to be NaN, NaN
 			if (currentZoomLevel < zoomLevelForDetailedView) {
 				if (jumpInsteadOfEaseTo) {
 					mapInstance.jumpTo({
@@ -76,6 +78,104 @@ function fillSidebarWithOsmDataAndShow(
 			setSidebarAction(SidebarAction.showDetails);
 			setSidebarLeftShown(true);
 		}
+	});
+}
+
+/**
+ * El estilo base se vuelve a cargar cuando cambias de idioma/países,
+ * así que necesitamos reinyectar la fuente/capas del GeoJSON cada vez.
+ */
+function ensureGeojsonLayers(map: maplibregl.Map) {
+	// 1) Quitar capas anteriores (si existen) para evitar duplicados
+	for (const id of [
+		LAYER_UNCLUSTERED,
+		LAYER_UNCLUSTERED_LOW_ZOOM,
+		LAYER_CLUSTERED_CIRCLE,
+		LAYER_CLUSTERED_CIRCLE_LOW_ZOOM,
+	]) {
+		if (map.getLayer(id)) map.removeLayer(id);
+	}
+	if (map.getSource(GEOJSON_SOURCE_ID)) map.removeSource(GEOJSON_SOURCE_ID);
+
+	// 2) Añadir la fuente GeoJSON con clustering
+	map.addSource(GEOJSON_SOURCE_ID, {
+		type: "geojson",
+		data: GEOJSON_URL,
+		cluster: true,
+		clusterMaxZoom: 14,
+		clusterRadius: 50,
+	} as any);
+
+	// 3) Capas de clusters (círculos) — respetamos tus IDs existentes
+	map.addLayer({
+		id: LAYER_CLUSTERED_CIRCLE,
+		type: "circle",
+		source: GEOJSON_SOURCE_ID,
+		filter: ["has", "point_count"],
+		paint: {
+			"circle-color": [
+				"step",
+				["get", "point_count"],
+				"#88b04b", // pocos
+				10,
+				"#f1c40f", // medios
+				50,
+				"#e74c3c", // muchos
+			],
+			"circle-radius": [
+				"step",
+				["get", "point_count"],
+				14,
+				10,
+				20,
+				50,
+				28,
+			],
+			"circle-stroke-width": 2,
+			"circle-stroke-color": "#ffffff",
+		},
+	});
+
+	// (Opcional) versión low-zoom si tu estilo diferencia — aquí reutilizamos misma regla
+	map.addLayer({
+		id: LAYER_CLUSTERED_CIRCLE_LOW_ZOOM,
+		type: "circle",
+		source: GEOJSON_SOURCE_ID,
+		filter: ["has", "point_count"],
+		paint: {
+			"circle-color": "#88b04b",
+			"circle-radius": 10,
+			"circle-stroke-width": 1.5,
+			"circle-stroke-color": "#ffffff",
+		},
+	});
+
+	// 4) Puntos individuales (sin cluster)
+	map.addLayer({
+		id: LAYER_UNCLUSTERED,
+		type: "circle",
+		source: GEOJSON_SOURCE_ID,
+		filter: ["!", ["has", "point_count"]],
+		paint: {
+			"circle-radius": 7,
+			"circle-color": "#e81224",
+			"circle-stroke-width": 2,
+			"circle-stroke-color": "#ffffff",
+		},
+	});
+
+	// (Opcional) versión low-zoom
+	map.addLayer({
+		id: LAYER_UNCLUSTERED_LOW_ZOOM,
+		type: "circle",
+		source: GEOJSON_SOURCE_ID,
+		filter: ["!", ["has", "point_count"]],
+		paint: {
+			"circle-radius": 5,
+			"circle-color": "#e81224",
+			"circle-stroke-width": 1.5,
+			"circle-stroke-color": "#ffffff",
+		},
 	});
 }
 
@@ -154,9 +254,8 @@ const MapView: FC<MapViewProps> = ({ openChangesetId, setOpenChangesetId }) => {
 		removeNodeIdFromHash();
 		setSidebarData(null);
 		setSidebarAction(SidebarAction.addNode);
-		setSidebarLeftShown(!mobile); // for mobile hide sidebar so marker is visible
+		setSidebarLeftShown(!mobile);
 		setFooterButtonType(mobile ? ButtonsType.MobileAddAed : ButtonsType.None);
-		// add marker
 		const markerColour = "#e81224";
 		const mapCenter = map.getCenter();
 		const initialCoordinates: [number, number] = [mapCenter.lng, mapCenter.lat];
@@ -202,7 +301,8 @@ const MapView: FC<MapViewProps> = ({ openChangesetId, setOpenChangesetId }) => {
 
 	useEffect(() => {
 		if (mapContainer.current === null) return;
-		if (mapRef.current !== null) return; // stops map from initializing more than once
+		if (mapRef.current !== null) return; // solo una vez
+
 		const map = new maplibregl.Map({
 			container: mapContainer.current,
 			hash: locationParameter,
@@ -214,38 +314,28 @@ const MapView: FC<MapViewProps> = ({ openChangesetId, setOpenChangesetId }) => {
 			maplibreLogo: false,
 			attributionControl: false,
 		});
-		map.addControl(
-			new maplibregl.AttributionControl({
-				customAttribution: "",
-			}),
-		);
+
+		map.addControl(new maplibregl.AttributionControl({ customAttribution: "" }));
 		addMaplibreGeocoder(map);
 		mapRef.current = map;
-		// how fast mouse scroll wheel zooms
+
 		map.scrollZoom.setWheelZoomRate(1);
-		// disable map rotation using right click + drag
 		map.dragRotate.disable();
-		// disable map rotation using touch rotation gesture
 		map.touchZoomRotate.disableRotation();
-		// disable map rotation using shift + arrows
 		map.keyboard.disableRotation();
-		map.addControl(
-			new maplibregl.NavigationControl({
-				showCompass: false,
-			}),
-			controlsLocation,
-		);
+		map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
 		map.addControl(
 			new maplibregl.GeolocateControl({
-				positionOptions: {
-					enableHighAccuracy: true,
-				},
-				fitBoundsOptions: {
-					animate: false,
-				},
+				positionOptions: { enableHighAccuracy: true },
+				fitBoundsOptions: { animate: false },
 			}),
-			controlsLocation,
+			"bottom-right",
 		);
+
+		// Inyecta la fuente/capas del GeoJSON cuando el estilo esté listo
+		map.on("load", () => ensureGeojsonLayers(map));
+		// …y cada vez que el estilo se recargue (p. ej., cambio de idioma)
+		map.on("styledata", () => ensureGeojsonLayers(map));
 
 		for (const layer of [
 			LAYER_CLUSTERED_CIRCLE,
@@ -253,35 +343,30 @@ const MapView: FC<MapViewProps> = ({ openChangesetId, setOpenChangesetId }) => {
 			LAYER_CLUSTERED_CIRCLE_LOW_ZOOM,
 			LAYER_UNCLUSTERED_LOW_ZOOM,
 		]) {
-			map.on("mouseenter", layer, () => {
-				map.getCanvas().style.cursor = "pointer";
-			});
-			map.on("mouseleave", layer, () => {
-				map.getCanvas().style.cursor = "";
-			});
+			map.on("mouseenter", layer, () => (map.getCanvas().style.cursor = "pointer"));
+			map.on("mouseleave", layer, () => (map.getCanvas().style.cursor = ""));
 		}
+
 		map.on("moveend", saveLocationToLocalStorage);
+
 		type MapEventType = MapMouseEvent & { features?: MapGeoJSONFeature[] };
-		for (const layer of [
-			LAYER_CLUSTERED_CIRCLE,
-			LAYER_CLUSTERED_CIRCLE_LOW_ZOOM,
-		]) {
+
+		for (const layer of [LAYER_CLUSTERED_CIRCLE, LAYER_CLUSTERED_CIRCLE_LOW_ZOOM]) {
 			map.on("click", layer, (e: MapEventType) => {
-				const features = map.queryRenderedFeatures(e.point, {
-					layers: [layer],
-				});
-				const zoom = map.getZoom();
+				const features = map.queryRenderedFeatures(e.point, { layers: [layer] });
+				if (!features.length) return;
+				const zoomNow = map.getZoom();
 				const point = features[0].geometry as GeoJSON.Point;
-				map.easeTo({
-					center: point.coordinates as [number, number],
-					zoom: zoom + 2,
-				});
+				map.easeTo({ center: point.coordinates as [number, number], zoom: zoomNow + 2 });
 			});
 		}
+
 		function showObjectWithProperties(e: MapEventType) {
-			if (e.features === undefined) return;
-			if (e.features[0].properties !== undefined && mapRef.current !== null) {
-				const osmNodeId = e.features[0].properties.node_id;
+			if (!e.features?.length || !mapRef.current) return;
+			const props = e.features[0].properties as any;
+			// Mantener funcionalidad: si hay node_id, abrimos sidebar con datos OSM
+			if (props && typeof props.node_id === "string") {
+				const osmNodeId = props.node_id;
 				fillSidebarWithOsmDataAndShow(
 					osmNodeId,
 					mapRef.current,
@@ -291,14 +376,16 @@ const MapView: FC<MapViewProps> = ({ openChangesetId, setOpenChangesetId }) => {
 					false,
 				);
 				addNodeIdToHash(osmNodeId);
+			} else {
+				// Si tu GeoJSON no tiene node_id, no rompemos nada (no abrimos sidebar).
+				// Opcional: aquí podrías abrir un popup simple con properties.name/description.
 			}
 		}
 
-		// show sidebar on single element click
 		map.on("click", LAYER_UNCLUSTERED, showObjectWithProperties);
 		map.on("click", LAYER_UNCLUSTERED_LOW_ZOOM, showObjectWithProperties);
 
-		// if direct link to osm node then get its data and zoom in
+		// Link directo a un node_id (solo funcionará si existe en OSM/back)
 		const newParamsFromHash = parseParametersFromUrl();
 		if (newParamsFromHash.node_id && mapRef.current !== null) {
 			fillSidebarWithOsmDataAndShow(
@@ -325,8 +412,9 @@ const MapView: FC<MapViewProps> = ({ openChangesetId, setOpenChangesetId }) => {
 		if (mapRef.current === null) return;
 		const map = mapRef.current;
 		addMaplibreGeocoder(map);
-		if (countriesDataLanguage !== language) return; // wait for countries data to be loaded
+		if (countriesDataLanguage !== language) return; // espera a countriesData
 		map.setStyle(mapStyle(language.toUpperCase(), countriesData));
+		// ensureGeojsonLayers se re-llama en "styledata"
 	}, [countriesData, countriesDataLanguage, language, addMaplibreGeocoder]);
 
 	return (
