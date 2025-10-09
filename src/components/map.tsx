@@ -473,4 +473,98 @@ const MapView: FC<MapViewProps> = ({ openChangesetId, setOpenChangesetId }) => {
     }
 
     // Click en punto suelto:
-    fun
+    function showObjectWithProperties(e: MapEventType) {
+      if (!e.features?.length || !mapRef.current) return;
+      const feat: any = e.features[0];
+      const props: AnyProps = feat.properties || {};
+
+      // Solo abrimos sidebar si viene node_id "real" (OSM); nuestros datos locales no lo tienen
+      if (typeof props.node_id === "string") {
+        const osmNodeId = props.node_id;
+        fillSidebarWithOsmDataAndShow(
+          osmNodeId,
+          mapRef.current,
+          setSidebarAction,
+          setSidebarData,
+          setSidebarLeftShown,
+          false,
+        );
+        addNodeIdToHash(osmNodeId);
+        return;
+      }
+
+      // Popup sencillo con info básica (nombre/dirección/ubicación)
+      const [lng, lat] = (feat.geometry?.coordinates || []) as [number, number];
+      const html = buildPopupHtml(props);
+      new maplibregl.Popup().setLngLat([lng, lat]).setHTML(html).addTo(mapRef.current);
+    }
+
+    map.on("click", LAYER_UNCLUSTERED, showObjectWithProperties);
+    map.on("click", LAYER_UNCLUSTERED_LOW_ZOOM, showObjectWithProperties);
+
+    // if direct link to osm node then get its data and zoom in
+    const newParamsFromHash = parseParametersFromUrl();
+    if (newParamsFromHash.node_id && mapRef.current !== null) {
+      fillSidebarWithOsmDataAndShow(
+        newParamsFromHash.node_id,
+        mapRef.current,
+        setSidebarAction,
+        setSidebarData,
+        setSidebarLeftShown,
+        true,
+      );
+    }
+  }, [
+    latitude,
+    longitude,
+    zoom,
+    setSidebarAction,
+    setSidebarData,
+    language,
+    countriesData,
+    addMaplibreGeocoder,
+  ]);
+
+  useEffect(() => {
+    if (mapRef.current === null) return;
+    const map = mapRef.current;
+    addMaplibreGeocoder(map);
+    if (countriesDataLanguage !== language) return; // wait for countries data to be loaded
+    map.setStyle(mapStyle(language.toUpperCase(), countriesData));
+    // ensureGeojsonLayers se vuelve a llamar en "styledata"
+  }, [countriesData, countriesDataLanguage, language, addMaplibreGeocoder]);
+
+  return (
+    <>
+      {sidebarLeftShown && (
+        <SidebarLeft
+          action={sidebarAction}
+          data={sidebarData}
+          closeSidebar={closeSidebarLeft}
+          visible={sidebarLeftShown}
+          marker={marker}
+          openChangesetId={openChangesetId}
+          setOpenChangesetId={setOpenChangesetId}
+        />
+      )}
+      <div className="map-wrap">
+        <div ref={mapContainer} className="map" />
+      </div>
+      <FooterDiv
+        startAEDAdding={(mobile) =>
+          checkConditionsThenCall(() => startAEDAdding(mobile))
+        }
+        mobileCancel={mobileCancel}
+        showFormMobile={showFormMobile}
+        buttonsConfiguration={footerButtonType}
+      />
+    </>
+  );
+};
+
+interface MapViewProps {
+  openChangesetId: string;
+  setOpenChangesetId: (openChangesetId: string) => void;
+}
+
+export default MapView;
