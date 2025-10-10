@@ -58,6 +58,8 @@ export default function MapView() {
   useEffect(() => {
     if (!mapContainer.current || mapRef.current) return
 
+    console.log("[v0] Inicializando mapa...")
+
     const map = new maplibregl.Map({
       container: mapContainer.current,
       style: {
@@ -89,6 +91,7 @@ export default function MapView() {
     })
 
     mapRef.current = map
+    console.log("[v0] Mapa creado, esperando evento 'load'...")
 
     map.scrollZoom.setWheelZoomRate(1)
     map.dragRotate.disable()
@@ -105,13 +108,16 @@ export default function MapView() {
     )
 
     map.on("load", () => {
+      console.log("[v0] Evento 'load' disparado, cargando capas...")
       ensureGeojsonLayers(map)
         .then(() => {
           setIsLoading(false)
           console.log("[EU_osm] Mapa cargado completamente")
+          console.log("[v0] Capas agregadas exitosamente")
         })
         .catch((error) => {
           console.error("[EU_osm] Error cargando datos:", error)
+          console.error("[v0] Error al agregar capas:", error)
           setIsLoading(false)
         })
     })
@@ -159,7 +165,7 @@ export default function MapView() {
 
   return (
     <div className="relative h-screen w-full">
-      <div ref={mapContainer} className="h-full w-full" />
+      <div ref={mapContainer} className="map-container" />
       {isLoading && (
         <div className="absolute inset-0 flex items-center justify-center bg-[#009140] bg-opacity-90">
           <div className="text-white text-xl">Cargando desfibriladores...</div>
@@ -255,6 +261,8 @@ function buildPopupHtml(props: Record<string, unknown>, coords: [number, number]
  * Load the GeoJSON data and ensure that the source and layers are present.
  */
 async function ensureGeojsonLayers(map: maplibregl.Map) {
+  console.log("[v0] Iniciando carga de GeoJSON desde:", GEOJSON_URL)
+
   // Fetch the GeoJSON data as an object
   const res = await fetch(GEOJSON_URL, { cache: "no-store" })
   if (!res.ok) {
@@ -264,10 +272,12 @@ async function ensureGeojsonLayers(map: maplibregl.Map) {
   const data = (await res.json()) as GeoJSON.FeatureCollection
   const features = data.features || []
   console.log(`[EU_osm] Cargadas ${features.length} features`)
+  console.log("[v0] Primera feature:", features[0])
 
   // If the source already exists, just update its data
   const existing = map.getSource(GEOJSON_SOURCE_ID) as any
   if (existing && typeof existing.setData === "function") {
+    console.log("[v0] Fuente existente encontrada, actualizando datos...")
     existing.setData(data)
     return
   }
@@ -279,13 +289,18 @@ async function ensureGeojsonLayers(map: maplibregl.Map) {
     LAYER_UNCLUSTERED,
     LAYER_UNCLUSTERED_LOW_ZOOM,
   ]) {
-    if (map.getLayer(id)) map.removeLayer(id)
+    if (map.getLayer(id)) {
+      console.log("[v0] Removiendo capa existente:", id)
+      map.removeLayer(id)
+    }
   }
   if (map.getSource(GEOJSON_SOURCE_ID)) {
+    console.log("[v0] Removiendo fuente existente:", GEOJSON_SOURCE_ID)
     map.removeSource(GEOJSON_SOURCE_ID)
   }
 
   // Add the GeoJSON source with clustering enabled
+  console.log("[v0] Agregando fuente GeoJSON con clustering...")
   map.addSource(GEOJSON_SOURCE_ID, {
     type: "geojson",
     data,
@@ -296,6 +311,7 @@ async function ensureGeojsonLayers(map: maplibregl.Map) {
   } as any)
 
   // Capa para clusters en zoom alto
+  console.log("[v0] Agregando capa:", LAYER_CLUSTERED_CIRCLE)
   map.addLayer({
     id: LAYER_CLUSTERED_CIRCLE,
     type: "circle",
@@ -319,6 +335,7 @@ async function ensureGeojsonLayers(map: maplibregl.Map) {
   })
 
   // Capa para clusters en zoom bajo
+  console.log("[v0] Agregando capa:", LAYER_CLUSTERED_CIRCLE_LOW_ZOOM)
   map.addLayer({
     id: LAYER_CLUSTERED_CIRCLE_LOW_ZOOM,
     type: "circle",
@@ -334,6 +351,7 @@ async function ensureGeojsonLayers(map: maplibregl.Map) {
   })
 
   // Capa para puntos individuales en zoom alto
+  console.log("[v0] Agregando capa:", LAYER_UNCLUSTERED)
   map.addLayer({
     id: LAYER_UNCLUSTERED,
     type: "circle",
@@ -349,6 +367,7 @@ async function ensureGeojsonLayers(map: maplibregl.Map) {
   })
 
   // Capa para puntos individuales en zoom bajo
+  console.log("[v0] Agregando capa:", LAYER_UNCLUSTERED_LOW_ZOOM)
   map.addLayer({
     id: LAYER_UNCLUSTERED_LOW_ZOOM,
     type: "circle",
@@ -362,4 +381,8 @@ async function ensureGeojsonLayers(map: maplibregl.Map) {
       "circle-stroke-color": "#ffffff",
     },
   })
+
+  console.log("[v0] Todas las capas agregadas exitosamente")
+  console.log("[v0] Zoom actual:", map.getZoom())
+  console.log("[v0] Centro actual:", map.getCenter())
 }
