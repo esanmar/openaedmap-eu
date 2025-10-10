@@ -64,22 +64,21 @@ export default function MapView() {
       container: mapContainer.current,
       style: {
         version: 8,
-        name: "OpenAEDMap EU",
         sources: {
-          osm: {
+          "raster-tiles": {
             type: "raster",
             tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
             tileSize: 256,
-            minzoom: 0,
-            maxzoom: 19,
-            attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
           },
         },
         layers: [
           {
-            id: "background",
+            id: "simple-tiles",
             type: "raster",
-            source: "osm",
+            source: "raster-tiles",
+            minzoom: 0,
+            maxzoom: 22,
           },
         ],
       },
@@ -87,11 +86,10 @@ export default function MapView() {
       zoom: 4,
       minZoom: 3,
       maxZoom: 19,
-      attributionControl: true,
     })
 
     mapRef.current = map
-    console.log("[v0] Mapa creado, esperando evento 'load'...")
+    console.log("[v0] Mapa creado")
 
     map.scrollZoom.setWheelZoomRate(1)
     map.dragRotate.disable()
@@ -108,16 +106,14 @@ export default function MapView() {
     )
 
     map.on("load", () => {
-      console.log("[v0] Evento 'load' disparado, cargando capas...")
+      console.log("[v0] Mapa cargado, agregando capas de desfibriladores...")
       ensureGeojsonLayers(map)
         .then(() => {
           setIsLoading(false)
-          console.log("[EU_osm] Mapa cargado completamente")
-          console.log("[v0] Capas agregadas exitosamente")
+          console.log("[EU_osm] Mapa completamente listo")
         })
         .catch((error) => {
-          console.error("[EU_osm] Error cargando datos:", error)
-          console.error("[v0] Error al agregar capas:", error)
+          console.error("[EU_osm] Error:", error)
           setIsLoading(false)
         })
     })
