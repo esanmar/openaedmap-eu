@@ -205,7 +205,7 @@ async function ensureGeojsonLayers(map: maplibregl.Map) {
     }
   }
 
-  console.log("[EU_osm] capas inyectadas OK");
+  
 }
 
 function fillSidebarWithOsmDataAndShow(
