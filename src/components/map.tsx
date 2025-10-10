@@ -91,7 +91,7 @@ async function ensureGeojsonLayers(map: maplibregl.Map) {
   }
   const data = (await res.json()) as GeoJSON.FeatureCollection;
   const count = data.features?.length ?? 0;
-  console.log("[EU_osm] features:", count);
+
   if (!count) {
     console.warn("[EU_osm] No hay features en el GeoJSON.");
   }
