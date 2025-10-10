@@ -1,47 +1,47 @@
-.map-wrap {
-	position: absolute;
-	width: 100%;
-	height: calc(100% - 60px);
-	/* calculate height of the screen minus the heading */
+.map-container {
+  width: 100%;
+  height: 100vh;
+  position: relative;
 }
 
-.map {
-	position: absolute;
-	width: 100%;
-	height: 100%;
+.maplibregl-map {
+  width: 100%;
+  height: 100%;
 }
 
-.maplibregl-ctrl-logo {
-	position: fixed;
-	bottom: 64px !important;
-	min-width: 90px;
+.maplibregl-popup {
+  max-width: 400px;
+  font-family: Arial, sans-serif;
+}
+
+.maplibregl-popup-content {
+  padding: 15px;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.maplibregl-popup-close-button {
+  font-size: 20px;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  line-height: 24px;
+  color: #666;
+  right: 8px;
+  top: 8px;
+}
+
+.maplibregl-popup-close-button:hover {
+  background-color: rgba(0, 0, 0, 0.05);
+  color: #000;
 }
 
 .maplibregl-ctrl-group button {
-	width: 44px !important;
-	height: 44px !important;
+  width: 30px;
+  height: 30px;
 }
 
-.maplibregl-ctrl-zoom-in .maplibregl-ctrl-icon,
-.maplibregl-ctrl-zoom-out .maplibregl-ctrl-icon,
-.maplibregl-ctrl-attrib,
-.maplibregl-ctrl-geolocate {
-	filter: contrast(80%);
-}
-
-.maplibregl-ctrl-group:not(:empty) {
-	box-shadow:
-		0 0.5em 1em -0.125em rgba(10, 10, 10, 0.1),
-		0 0 0 1px rgba(10, 10, 10, 0.02);
-}
-
-.maplibregl-ctrl-geocoder {
-	min-width: 300px !important;
-}
-
-@media (prefers-color-scheme: dark) {
-	.maplibregl-ctrl-geocoder--input {
-		background-color: black !important;
-		color: white !important;
-	}
+.maplibregl-ctrl-attrib {
+  background-color: rgba(255, 255, 255, 0.8);
+  font-size: 11px;
 }
