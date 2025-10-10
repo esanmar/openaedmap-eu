@@ -35,7 +35,6 @@ import mapStyle, {
 } from "./map_style";
 import SidebarLeft from "./sidebar-left";
 
-
 /**
  * Helper function that fetches details for a given OSM node ID and opens
  * the sidebar. This mirrors the implementation from the original
@@ -83,9 +82,20 @@ function fillSidebarWithOsmDataAndShow(
       setSidebarLeftShown(true);
     }
   });
-  // Hacer la función global para evitar el ReferenceError en el código compilado
+  // Expose the helper globally so compiled code that relies on a global
+  // function can call it. Without this assignment, a ReferenceError will
+  // occur when clicking on a feature in the map. See issue where
+  // fillSidebarWithOsmDataAndShow was not defined in the global scope.
   (window as any).fillSidebarWithOsmDataAndShow = fillSidebarWithOsmDataAndShow;
 }
+
+/**
+ * A Map component that loads a local GeoJSON file in the same
+ * format expected by the OpenAEDMap frontend. It preserves the
+ * original behaviour (cluster colouring, zoom interactions, sidebar
+ * opening) while sourcing data from a static file instead of the
+ * OSM vector tile backend.
+ */
 
 // Identifier for our custom GeoJSON source.
 const GEOJSON_SOURCE_ID = "aed-geojson";
@@ -170,13 +180,13 @@ async function ensureGeojsonLayers(map: maplibregl.Map) {
     map.removeSource(GEOJSON_SOURCE_ID);
   }
   // Add the GeoJSON source with clustering enabled. According to the
-  // original map style, the defibrillator vector tiles stop at zoom 16:contentReference[oaicite:1]{index=1}.
+  // original map style, the defibrillator vector tiles stop at zoom 16【346339423607823†L53-L56】.
   map.addSource(GEOJSON_SOURCE_ID, {
     type: "geojson",
     data,
     cluster: true,
     clusterMaxZoom: 15, // cluster up to zoom 15
-    maxzoom: 16, // consistent with style:contentReference[oaicite:2]{index=2}
+    maxzoom: 16, // consistent with style【346339423607823†L53-L56】
     clusterRadius: 20,
   } as any);
   // Add layers replicating the original map style. The IDs must match
@@ -267,9 +277,287 @@ async function ensureGeojsonLayers(map: maplibregl.Map) {
  * it shows a simple popup using properties from the dataset.
  */
 const MapView: FC<MapViewProps> = ({ openChangesetId, setOpenChangesetId }) => {
-  // … (el resto de MapView permanece igual que tu implementación actual)
-  // Nota: asegúrate de conservar los handlers de clusters y puntos, así como
-  // el control de geocodificación, el sidebar y el pie de página.
+  const {
+    authState: { auth },
+    setModalState,
+    sidebarAction,
+    setSidebarAction,
+    sidebarData,
+    setSidebarData,
+    countriesData,
+    setCountriesData,
+    countriesDataLanguage,
+    setCountriesDataLanguage,
+  } = useAppContext();
+  const { t } = useTranslation();
+  const language = useLanguage();
+  const { longitude, latitude, zoom } = getMapLocation();
+  const mapContainer = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<maplibregl.Map | null>(null);
+  const maplibreGeocoderRef = useRef<MaplibreGeocoder | null>(null);
+  const controlsLocation = "bottom-right";
+  const [marker, setMarker] = useState<maplibregl.Marker | null>(null);
+  const [sidebarLeftShown, setSidebarLeftShown] = useState(false);
+  const [footerButtonType, setFooterButtonType] = useState(ButtonsType.Basic);
+
+  const deleteMarker = () => {
+    if (marker !== null) {
+      marker.remove();
+      setMarker(null);
+    }
+  };
+
+  const closeSidebarLeft = () => {
+    setSidebarLeftShown(false);
+    deleteMarker();
+    removeNodeIdFromHash();
+    setFooterButtonType(ButtonsType.Basic);
+  };
+
+  const checkConditionsThenCall = (callable: () => void) => {
+    if (mapRef.current === null) return;
+    const map = mapRef.current;
+    if (auth === null || !auth.authenticated()) {
+      setModalState({
+        ...initialModalState,
+        visible: true,
+        type: ModalType.NeedToLogin,
+      });
+    } else if (map.getZoom() < 15) {
+      setModalState({
+        ...initialModalState,
+        visible: true,
+        type: ModalType.NeedMoreZoom,
+        currentZoom: map.getZoom(),
+      });
+    } else callable();
+  };
+
+  const mobileCancel = () => {
+    deleteMarker();
+    setSidebarLeftShown(false);
+    setFooterButtonType(ButtonsType.Basic);
+  };
+
+  const showFormMobile = () => {
+    setSidebarLeftShown(true);
+    setFooterButtonType(ButtonsType.None);
+  };
+
+  const startAEDAdding = (mobile: boolean) => {
+    if (mapRef.current === null) return;
+    const map = mapRef.current;
+    deleteMarker();
+    removeNodeIdFromHash();
+    setSidebarData(null);
+    setSidebarAction(SidebarAction.addNode);
+    setSidebarLeftShown(!mobile);
+    setFooterButtonType(mobile ? ButtonsType.MobileAddAed : ButtonsType.None);
+    const markerColour = "#e81224";
+    const mapCenter = map.getCenter();
+    const initialCoordinates: [number, number] = [mapCenter.lng, mapCenter.lat];
+    setMarker(
+      new maplibregl.Marker({ draggable: true, color: markerColour })
+        .setLngLat(initialCoordinates)
+        .setPopup(new maplibregl.Popup().setHTML(t("form.marker_popup_text")))
+        .addTo(mapRef.current)
+        .togglePopup(),
+    );
+  };
+
+  // Load country boundaries (unchanged)
+  useEffect(() => {
+    const fetchData = async () => {
+      const data = await fetchCountriesData(language);
+      if (data !== null) {
+        setCountriesData(data);
+        setCountriesDataLanguage(language);
+      }
+    };
+    fetchData().catch(console.error);
+  }, [language, setCountriesDataLanguage, setCountriesData]);
+
+  // Add geocoder control (unchanged)
+  const addMaplibreGeocoder = useCallback(
+    (map: maplibregl.Map) => {
+      if (maplibreGeocoderRef.current !== null) {
+        map.removeControl(maplibreGeocoderRef.current);
+      }
+      const newMaplibreGeocoder = new MaplibreGeocoder(nominatimGeocoder, {
+        maplibregl,
+        placeholder: t("sidebar.find_location"),
+        reverseGeocode: false,
+      } as MaplibreGeocoderOptions);
+      newMaplibreGeocoder.setLanguage(language);
+      map.addControl(newMaplibreGeocoder);
+      maplibreGeocoderRef.current = newMaplibreGeocoder;
+    },
+    [t, language],
+  );
+
+  // Initialize the map
+  useEffect(() => {
+    if (mapContainer.current === null) return;
+    if (mapRef.current !== null) return;
+    const map = new maplibregl.Map({
+      container: mapContainer.current,
+      hash: locationParameter,
+      style: mapStyle(language.toUpperCase(), countriesData),
+      center: [longitude, latitude],
+      zoom: zoom,
+      minZoom: 3,
+      maxZoom: 19,
+      maplibreLogo: false,
+      attributionControl: false,
+    });
+    // Provide a 1x1 transparent image for missing sprites
+    map.on("styleimagemissing", (e) => {
+      if (map.hasImage(e.id)) return;
+      // @ts-ignore
+      const img = new ImageData(new Uint8ClampedArray(4), 1, 1);
+      map.addImage(e.id, img, { sdf: false });
+    });
+    map.addControl(
+      new maplibregl.AttributionControl({ customAttribution: "" }),
+    );
+    addMaplibreGeocoder(map);
+    mapRef.current = map;
+    map.scrollZoom.setWheelZoomRate(1);
+    map.dragRotate.disable();
+    map.touchZoomRotate.disableRotation();
+    map.keyboard.disableRotation();
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), controlsLocation);
+    map.addControl(
+      new maplibregl.GeolocateControl({
+        positionOptions: { enableHighAccuracy: true },
+        fitBoundsOptions: { animate: false },
+      }),
+      controlsLocation,
+    );
+    // On load, create layers
+    map.on("load", () => {
+      ensureGeojsonLayers(map).catch(console.error);
+    });
+    // On style change (e.g. switching language), only add layers if source is missing
+    map.on("styledata", () => {
+      if (!map.getSource(GEOJSON_SOURCE_ID)) {
+        ensureGeojsonLayers(map).catch(console.error);
+      }
+    });
+    // Hover cursor behaviour
+    for (const layer of [
+      LAYER_CLUSTERED_CIRCLE,
+      LAYER_UNCLUSTERED,
+      LAYER_CLUSTERED_CIRCLE_LOW_ZOOM,
+      LAYER_UNCLUSTERED_LOW_ZOOM,
+    ]) {
+      map.on("mouseenter", layer, () => {
+        map.getCanvas().style.cursor = "pointer";
+      });
+      map.on("mouseleave", layer, () => {
+        map.getCanvas().style.cursor = "";
+      });
+    }
+    map.on("moveend", saveLocationToLocalStorage);
+    // Handle cluster clicks: zoom in
+    type MapEventTypeFull = MapMouseEvent & { features?: MapGeoJSONFeature[] };
+    for (const layer of [LAYER_CLUSTERED_CIRCLE, LAYER_CLUSTERED_CIRCLE_LOW_ZOOM]) {
+      map.on("click", layer, (e: MapEventTypeFull) => {
+        const features = map.queryRenderedFeatures(e.point, { layers: [layer] });
+        if (!features.length) return;
+        const zoomNow = map.getZoom();
+        const point = features[0].geometry as GeoJSON.Point;
+        map.easeTo({ center: point.coordinates as [number, number], zoom: zoomNow + 2 });
+      });
+    }
+    // Handle unclustered point clicks
+    function handlePointClick(e: MapEventTypeFull) {
+      if (!e.features?.length || !mapRef.current) return;
+      const feature = e.features[0] as any;
+      const props = feature.properties || {};
+      // If a node_id exists, open the full sidebar via backend
+      if (props.node_id) {
+        const nodeId = String(props.node_id);
+        fillSidebarWithOsmDataAndShow(
+          nodeId,
+          mapRef.current,
+          setSidebarAction,
+          setSidebarData,
+          setSidebarLeftShown,
+          false,
+        );
+        addNodeIdToHash(nodeId);
+      } else {
+        // Otherwise show a simple popup with navigation links
+        const [lon, lat] = feature.geometry.coordinates as [number, number];
+        const html = buildPopupHtml(props, [lon, lat]);
+        new maplibregl.Popup().setLngLat([lon, lat]).setHTML(html).addTo(mapRef.current);
+      }
+    }
+    map.on("click", LAYER_UNCLUSTERED, handlePointClick);
+    map.on("click", LAYER_UNCLUSTERED_LOW_ZOOM, handlePointClick);
+    // If a node_id is provided via URL, load it on init
+    const params = parseParametersFromUrl();
+    if (params.node_id && mapRef.current) {
+      fillSidebarWithOsmDataAndShow(
+        params.node_id,
+        mapRef.current,
+        setSidebarAction,
+        setSidebarData,
+        setSidebarLeftShown,
+        true,
+      );
+    }
+  }, [
+    latitude,
+    longitude,
+    zoom,
+    setSidebarAction,
+    setSidebarData,
+    language,
+    countriesData,
+    addMaplibreGeocoder,
+  ]);
+
+  // Update the map style when countries data or language changes
+  useEffect(() => {
+    if (mapRef.current === null) return;
+    const map = mapRef.current;
+    addMaplibreGeocoder(map);
+    if (countriesDataLanguage !== language) return;
+    map.setStyle(mapStyle(language.toUpperCase(), countriesData));
+    // When the style is reloaded, our handler on styledata will re-inject layers
+  }, [countriesData, countriesDataLanguage, language, addMaplibreGeocoder]);
+
+  return (
+    <>
+      {sidebarLeftShown && (
+        <SidebarLeft
+          action={sidebarAction}
+          data={sidebarData}
+          closeSidebar={closeSidebarLeft}
+          visible={sidebarLeftShown}
+          marker={marker}
+          openChangesetId={openChangesetId}
+          setOpenChangesetId={setOpenChangesetId}
+        />
+      )}
+      <div className="map-wrap">
+        <div ref={mapContainer} className="map" />
+      </div>
+      <FooterDiv
+        startAEDAdding={(mobile) => checkConditionsThenCall(() => startAEDAdding(mobile))}
+        mobileCancel={mobileCancel}
+        showFormMobile={showFormMobile}
+        buttonsConfiguration={footerButtonType}
+      />
+    </>
+  );
 };
+
+interface MapViewProps {
+  openChangesetId: string;
+  setOpenChangesetId: (openChangesetId: string) => void;
+}
 
 export default MapView;
