@@ -1,450 +1,120 @@
-import MaplibreGeocoder, {
-  type MaplibreGeocoderOptions,
-} from "@maplibre/maplibre-gl-geocoder";
-import "@maplibre/maplibre-gl-geocoder/dist/maplibre-gl-geocoder.css";
-import maplibregl, {
-  type MapGeoJSONFeature,
-  type MapMouseEvent,
-} from "maplibre-gl";
-import "maplibre-gl/dist/maplibre-gl.css";
-import { type FC, useCallback, useEffect, useRef, useState } from "react";
-import { useTranslation } from "react-i18next";
-import { useAppContext } from "~/appContext";
-import { fetchCountriesData, fetchNodeDataFromBackend } from "~/backend";
-import nominatimGeocoder from "~/components/nominatimGeocoder";
-import { useLanguage } from "~/i18n";
-import {
-  addNodeIdToHash,
-  getMapLocation,
-  locationParameter,
-  parseParametersFromUrl,
-  removeNodeIdFromHash,
-  saveLocationToLocalStorage,
-} from "~/location";
-import ButtonsType from "~/model/buttonsType";
-import type { DefibrillatorData } from "~/model/defibrillatorData";
-import { initialModalState, ModalType } from "~/model/modal";
-import SidebarAction from "~/model/sidebarAction";
-import FooterDiv from "./footer";
-import "./map.css";
-import mapStyle, {
-  LAYER_CLUSTERED_CIRCLE,
-  LAYER_CLUSTERED_CIRCLE_LOW_ZOOM,
-  LAYER_UNCLUSTERED,
-  LAYER_UNCLUSTERED_LOW_ZOOM,
-} from "./map_style";
-import SidebarLeft from "./sidebar-left";
+"use client"
 
-/**
- * Helper function that fetches details for a given OSM node ID and opens
- * the sidebar. This mirrors the implementation from the original
- * OpenAEDMap frontend. Without this function the call in handlePointClick
- * causes a ReferenceError.
- */
-function fillSidebarWithOsmDataAndShow(
-  nodeId: string,
-  mapInstance: maplibregl.Map,
-  setSidebarAction: (action: SidebarAction) => void,
-  setSidebarData: (data: DefibrillatorData) => void,
-  setSidebarLeftShown: (sidebarLeftShown: boolean) => void,
-  jumpInsteadOfEaseTo: boolean,
-) {
-  const result = fetchNodeDataFromBackend(nodeId);
-  result.then((data) => {
-    if (data) {
-      const zoomLevelForDetailedView = 17;
-      const currentZoomLevel = mapInstance.getZoom();
-      if (currentZoomLevel < zoomLevelForDetailedView) {
-        if (jumpInsteadOfEaseTo) {
-          mapInstance.jumpTo({
-            zoom: zoomLevelForDetailedView,
-            center: [data.lon, data.lat],
-          });
-        } else {
-          mapInstance.easeTo({
-            zoom: zoomLevelForDetailedView,
-            around: { lon: data.lon, lat: data.lat },
-          });
-        }
-      } else if (jumpInsteadOfEaseTo) {
-        mapInstance.jumpTo({
-          zoom: currentZoomLevel,
-          center: [data.lon, data.lat],
-        });
-      } else {
-        mapInstance.easeTo({
-          zoom: currentZoomLevel,
-          around: { lon: data.lon, lat: data.lat },
-        });
-      }
-      setSidebarData(data);
-      setSidebarAction(SidebarAction.showDetails);
-      setSidebarLeftShown(true);
-    }
-  });
-  // Expose the helper globally so compiled code that relies on a global
-  // function can call it. Without this assignment, a ReferenceError will
-  // occur when clicking on a feature in the map. See issue where
-  // fillSidebarWithOsmDataAndShow was not defined in the global scope.
-  (window as any).fillSidebarWithOsmDataAndShow = fillSidebarWithOsmDataAndShow;
+import maplibregl, { type MapGeoJSONFeature } from "maplibre-gl"
+import "maplibre-gl/dist/maplibre-gl.css"
+import { useEffect, useRef, useState } from "react"
+import "./map.css"
+
+// Tipos para los datos del desfibrilador
+interface DefibrillatorProperties {
+  access?: string
+  "addr:city"?: string
+  "addr:housenumber"?: string
+  "addr:postcode"?: string
+  "addr:street"?: string
+  description?: string
+  indoor?: string
+  level?: string
+  location?: string
+  "defibrillator:location"?: string
+  opening_hours?: string
+  operator?: string
+  phone?: string
+  name?: string
+  address?: string
+  model?: string
+  ref?: string
+  organismo?: string
+  municipio?: string
+  provincia?: string
+  ubicacion?: string
+  horario?: string
+  [key: string]: any
 }
 
-/**
- * A Map component that loads a local GeoJSON file in the same
- * format expected by the OpenAEDMap frontend. It preserves the
- * original behaviour (cluster colouring, zoom interactions, sidebar
- * opening) while sourcing data from a static file instead of the
- * OSM vector tile backend.
- */
-
-// Identifier for our custom GeoJSON source.
-const GEOJSON_SOURCE_ID = "aed-geojson";
-// Path to the converted GeoJSON file. Change this when updating the data.
-const GEOJSON_URL = "/data/EU_osm.geojson";
-
-/**
- * Escape HTML entities to avoid injection in popups.
- */
-function escapeHtml(s: string) {
-  return s.replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" } as const)[c]!,
-  );
+interface DefibrillatorFeature {
+  type: "Feature"
+  geometry: {
+    type: "Point"
+    coordinates: [number, number]
+  }
+  properties: DefibrillatorProperties
 }
 
-/**
- * Build a popup HTML string using available properties. When a
- * feature doesn't come from OSM, we don't have a full sidebar so we
- * provide a simple popup with name, address, location and opening
- * hours. Navigation links are added using the coordinates so users
- * can still navigate to the AED.
- */
-function buildPopupHtml(props: Record<string, unknown>, coords: [number, number]) {
-  const [lon, lat] = coords;
-  const name =
-    (props.name as string) || (props.organismo as string) || (props.operator as string) || "";
-  const address =
-    (props.address as string) ||
-    [props.direccion, props.municipio, props.provincia].filter(Boolean).join(", ") ||
-    "";
-  const location =
-    (props["defibrillator:location"] as string) || (props.ubicacion as string) || "";
-  const oh = (props.opening_hours as string) || (props.horario as string) || "";
-  const rows: string[] = [];
-  if (name) rows.push(`<div><strong>${escapeHtml(name)}</strong></div>`);
-  if (address) rows.push(`<div>${escapeHtml(address)}</div>`);
-  if (location) rows.push(`<div><em>${escapeHtml(location)}</em></div>`);
-  if (oh) rows.push(`<div><small>Horario: ${escapeHtml(oh)}</small></div>`);
-  // Add navigation links using coordinates
-  const googleLink = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}`;
-  const osmLink = `https://www.openstreetmap.org/directions?engine=graphhopper_car&route=${lat}%2C${lon}`;
-  rows.push(
-    `<div style="margin-top:0.5rem"><a href="${googleLink}" target="_blank" rel="noopener">Navegación con Google Maps</a> · <a href="${osmLink}" target="_blank" rel="noopener">Navegación con OpenStreetMap</a></div>`,
-  );
-  return rows.join("");
-}
+// Constantes para las capas según el proyecto original
+const LAYER_CLUSTERED_CIRCLE = "clustered-circle"
+const LAYER_CLUSTERED_CIRCLE_LOW_ZOOM = "clustered-circle-low-zoom"
+const LAYER_UNCLUSTERED = "unclustered"
+const LAYER_UNCLUSTERED_LOW_ZOOM = "unclustered-low-zoom"
+const GEOJSON_SOURCE_ID = "aed-geojson"
+const GEOJSON_URL = "/data/EU_osm.geojson"
 
-/**
- * Load the GeoJSON data and ensure that the source and layers are present.
- * This function is idempotent: if the source exists it updates the data,
- * otherwise it creates the source and layers. Clustering is enabled
- * consistent with the original map (maxzoom 16, cluster up to 15).
- */
-async function ensureGeojsonLayers(map: maplibregl.Map) {
-  // Fetch the GeoJSON data as an object
-  const res = await fetch(GEOJSON_URL, { cache: "no-store" });
-  if (!res.ok) {
-    console.error(`[EU_osm] HTTP ${res.status} al cargar ${GEOJSON_URL}`);
-    return;
-  }
-  const data = (await res.json()) as GeoJSON.FeatureCollection;
-  const features = data.features || [];
-  if (!features.length) {
-    console.warn("[EU_osm] No hay features en el GeoJSON.");
-  }
-  // If the source already exists, just update its data
-  const existing = map.getSource(GEOJSON_SOURCE_ID) as any;
-  if (existing && typeof existing.setData === "function") {
-    existing.setData(data);
-    return;
-  }
-  // Otherwise, remove any leftover layers (defensive) and add our source
-  for (const id of [
-    LAYER_CLUSTERED_CIRCLE,
-    LAYER_CLUSTERED_CIRCLE_LOW_ZOOM,
-    LAYER_UNCLUSTERED,
-    LAYER_UNCLUSTERED_LOW_ZOOM,
-  ]) {
-    if (map.getLayer(id)) map.removeLayer(id);
-  }
-  if (map.getSource(GEOJSON_SOURCE_ID)) {
-    map.removeSource(GEOJSON_SOURCE_ID);
-  }
-  // Add the GeoJSON source with clustering enabled. According to the
-  // original map style, the defibrillator vector tiles stop at zoom 16【346339423607823†L53-L56】.
-  map.addSource(GEOJSON_SOURCE_ID, {
-    type: "geojson",
-    data,
-    cluster: true,
-    clusterMaxZoom: 15, // cluster up to zoom 15
-    maxzoom: 16, // consistent with style【346339423607823†L53-L56】
-    clusterRadius: 20,
-  } as any);
-  // Add layers replicating the original map style. The IDs must match
-  // those imported from map_style so that event handlers continue to work.
-  map.addLayer({
-    id: LAYER_CLUSTERED_CIRCLE,
-    type: "circle",
-    source: GEOJSON_SOURCE_ID,
-    filter: ["has", "point_count"],
-    paint: {
-      "circle-color": [
-        "step",
-        ["get", "point_count"],
-        "#88b04b",
-        10,
-        "#f1c40f",
-        50,
-        "#e74c3c",
-      ],
-      "circle-radius": [
-        "step",
-        ["get", "point_count"],
-        14,
-        10,
-        20,
-        50,
-        28,
-      ],
-      "circle-stroke-width": 2,
-      "circle-stroke-color": "#ffffff",
-    },
-  });
-  map.addLayer({
-    id: LAYER_CLUSTERED_CIRCLE_LOW_ZOOM,
-    type: "circle",
-    source: GEOJSON_SOURCE_ID,
-    filter: ["has", "point_count"],
-    paint: {
-      "circle-color": "#88b04b",
-      "circle-radius": 10,
-      "circle-stroke-width": 1.5,
-      "circle-stroke-color": "#ffffff",
-    },
-  });
-  map.addLayer({
-    id: LAYER_UNCLUSTERED,
-    type: "circle",
-    source: GEOJSON_SOURCE_ID,
-    filter: ["!", ["has", "point_count"]],
-    paint: {
-      "circle-radius": 7,
-      "circle-color": "#e81224",
-      "circle-stroke-width": 2,
-      "circle-stroke-color": "#ffffff",
-    },
-  });
-  map.addLayer({
-    id: LAYER_UNCLUSTERED_LOW_ZOOM,
-    type: "circle",
-    source: GEOJSON_SOURCE_ID,
-    filter: ["!", ["has", "point_count"]],
-    paint: {
-      "circle-radius": 5,
-      "circle-color": "#e81224",
-      "circle-stroke-width": 1.5,
-      "circle-stroke-color": "#ffffff",
-    },
-  });
-  // Move our layers to the top of the style so they are not obscured by others
-  const topLayer = map.getStyle().layers?.slice(-1)[0]?.id;
-  if (topLayer) {
-    for (const id of [
-      LAYER_UNCLUSTERED_LOW_ZOOM,
-      LAYER_UNCLUSTERED,
-      LAYER_CLUSTERED_CIRCLE_LOW_ZOOM,
-      LAYER_CLUSTERED_CIRCLE,
-    ]) {
-      if (map.getLayer(id)) map.moveLayer(id, topLayer);
-    }
-  }
-}
+export default function MapView() {
+  const mapContainer = useRef<HTMLDivElement>(null)
+  const mapRef = useRef<maplibregl.Map | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
 
-/**
- * The main MapView component. It is largely based on the original
- * OpenAEDMap map component but calls `ensureGeojsonLayers` to load
- * our static dataset. When a `node_id` property exists it opens the
- * sidebar with full details via `fetchNodeDataFromBackend`; otherwise
- * it shows a simple popup using properties from the dataset.
- */
-const MapView: FC<MapViewProps> = ({ openChangesetId, setOpenChangesetId }) => {
-  const {
-    authState: { auth },
-    setModalState,
-    sidebarAction,
-    setSidebarAction,
-    sidebarData,
-    setSidebarData,
-    countriesData,
-    setCountriesData,
-    countriesDataLanguage,
-    setCountriesDataLanguage,
-  } = useAppContext();
-  const { t } = useTranslation();
-  const language = useLanguage();
-  const { longitude, latitude, zoom } = getMapLocation();
-  const mapContainer = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<maplibregl.Map | null>(null);
-  const maplibreGeocoderRef = useRef<MaplibreGeocoder | null>(null);
-  const controlsLocation = "bottom-right";
-  const [marker, setMarker] = useState<maplibregl.Marker | null>(null);
-  const [sidebarLeftShown, setSidebarLeftShown] = useState(false);
-  const [footerButtonType, setFooterButtonType] = useState(ButtonsType.Basic);
-
-  const deleteMarker = () => {
-    if (marker !== null) {
-      marker.remove();
-      setMarker(null);
-    }
-  };
-
-  const closeSidebarLeft = () => {
-    setSidebarLeftShown(false);
-    deleteMarker();
-    removeNodeIdFromHash();
-    setFooterButtonType(ButtonsType.Basic);
-  };
-
-  const checkConditionsThenCall = (callable: () => void) => {
-    if (mapRef.current === null) return;
-    const map = mapRef.current;
-    if (auth === null || !auth.authenticated()) {
-      setModalState({
-        ...initialModalState,
-        visible: true,
-        type: ModalType.NeedToLogin,
-      });
-    } else if (map.getZoom() < 15) {
-      setModalState({
-        ...initialModalState,
-        visible: true,
-        type: ModalType.NeedMoreZoom,
-        currentZoom: map.getZoom(),
-      });
-    } else callable();
-  };
-
-  const mobileCancel = () => {
-    deleteMarker();
-    setSidebarLeftShown(false);
-    setFooterButtonType(ButtonsType.Basic);
-  };
-
-  const showFormMobile = () => {
-    setSidebarLeftShown(true);
-    setFooterButtonType(ButtonsType.None);
-  };
-
-  const startAEDAdding = (mobile: boolean) => {
-    if (mapRef.current === null) return;
-    const map = mapRef.current;
-    deleteMarker();
-    removeNodeIdFromHash();
-    setSidebarData(null);
-    setSidebarAction(SidebarAction.addNode);
-    setSidebarLeftShown(!mobile);
-    setFooterButtonType(mobile ? ButtonsType.MobileAddAed : ButtonsType.None);
-    const markerColour = "#e81224";
-    const mapCenter = map.getCenter();
-    const initialCoordinates: [number, number] = [mapCenter.lng, mapCenter.lat];
-    setMarker(
-      new maplibregl.Marker({ draggable: true, color: markerColour })
-        .setLngLat(initialCoordinates)
-        .setPopup(new maplibregl.Popup().setHTML(t("form.marker_popup_text")))
-        .addTo(mapRef.current)
-        .togglePopup(),
-    );
-  };
-
-  // Load country boundaries (unchanged)
   useEffect(() => {
-    const fetchData = async () => {
-      const data = await fetchCountriesData(language);
-      if (data !== null) {
-        setCountriesData(data);
-        setCountriesDataLanguage(language);
-      }
-    };
-    fetchData().catch(console.error);
-  }, [language, setCountriesDataLanguage, setCountriesData]);
+    if (!mapContainer.current || mapRef.current) return
 
-  // Add geocoder control (unchanged)
-  const addMaplibreGeocoder = useCallback(
-    (map: maplibregl.Map) => {
-      if (maplibreGeocoderRef.current !== null) {
-        map.removeControl(maplibreGeocoderRef.current);
-      }
-      const newMaplibreGeocoder = new MaplibreGeocoder(nominatimGeocoder, {
-        maplibregl,
-        placeholder: t("sidebar.find_location"),
-        reverseGeocode: false,
-      } as MaplibreGeocoderOptions);
-      newMaplibreGeocoder.setLanguage(language);
-      map.addControl(newMaplibreGeocoder);
-      maplibreGeocoderRef.current = newMaplibreGeocoder;
-    },
-    [t, language],
-  );
-
-  // Initialize the map
-  useEffect(() => {
-    if (mapContainer.current === null) return;
-    if (mapRef.current !== null) return;
     const map = new maplibregl.Map({
       container: mapContainer.current,
-      hash: locationParameter,
-      style: mapStyle(language.toUpperCase(), countriesData),
-      center: [longitude, latitude],
-      zoom: zoom,
+      style: {
+        version: 8,
+        name: "OpenAEDMap EU",
+        sources: {
+          osm: {
+            type: "raster",
+            tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+            tileSize: 256,
+            minzoom: 0,
+            maxzoom: 19,
+            attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+          },
+        },
+        layers: [
+          {
+            id: "background",
+            type: "raster",
+            source: "osm",
+          },
+        ],
+      },
+      center: [10, 50], // Centro de Europa
+      zoom: 4,
       minZoom: 3,
       maxZoom: 19,
-      maplibreLogo: false,
-      attributionControl: false,
-    });
-    // Provide a 1x1 transparent image for missing sprites
-    map.on("styleimagemissing", (e) => {
-      if (map.hasImage(e.id)) return;
-      // @ts-ignore
-      const img = new ImageData(new Uint8ClampedArray(4), 1, 1);
-      map.addImage(e.id, img, { sdf: false });
-    });
-    map.addControl(
-      new maplibregl.AttributionControl({ customAttribution: "" }),
-    );
-    addMaplibreGeocoder(map);
-    mapRef.current = map;
-    map.scrollZoom.setWheelZoomRate(1);
-    map.dragRotate.disable();
-    map.touchZoomRotate.disableRotation();
-    map.keyboard.disableRotation();
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), controlsLocation);
+      attributionControl: true,
+    })
+
+    mapRef.current = map
+
+    map.scrollZoom.setWheelZoomRate(1)
+    map.dragRotate.disable()
+    map.touchZoomRotate.disableRotation()
+    map.keyboard.disableRotation()
+
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right")
     map.addControl(
       new maplibregl.GeolocateControl({
         positionOptions: { enableHighAccuracy: true },
         fitBoundsOptions: { animate: false },
       }),
-      controlsLocation,
-    );
-    // On load, create layers
+      "bottom-right",
+    )
+
     map.on("load", () => {
-      ensureGeojsonLayers(map).catch(console.error);
-    });
-    // On style change (e.g. switching language), only add layers if source is missing
-    map.on("styledata", () => {
-      if (!map.getSource(GEOJSON_SOURCE_ID)) {
-        ensureGeojsonLayers(map).catch(console.error);
-      }
-    });
-    // Hover cursor behaviour
+      ensureGeojsonLayers(map)
+        .then(() => {
+          setIsLoading(false)
+          console.log("[EU_osm] Mapa cargado completamente")
+        })
+        .catch((error) => {
+          console.error("[EU_osm] Error cargando datos:", error)
+          setIsLoading(false)
+        })
+    })
+
     for (const layer of [
       LAYER_CLUSTERED_CIRCLE,
       LAYER_UNCLUSTERED,
@@ -452,112 +122,259 @@ const MapView: FC<MapViewProps> = ({ openChangesetId, setOpenChangesetId }) => {
       LAYER_UNCLUSTERED_LOW_ZOOM,
     ]) {
       map.on("mouseenter", layer, () => {
-        map.getCanvas().style.cursor = "pointer";
-      });
+        map.getCanvas().style.cursor = "pointer"
+      })
       map.on("mouseleave", layer, () => {
-        map.getCanvas().style.cursor = "";
-      });
+        map.getCanvas().style.cursor = ""
+      })
     }
-    map.on("moveend", saveLocationToLocalStorage);
-    // Handle cluster clicks: zoom in
-    type MapEventTypeFull = MapMouseEvent & { features?: MapGeoJSONFeature[] };
+
+    type MapEventTypeFull = maplibregl.MapMouseEvent & { features?: MapGeoJSONFeature[] }
     for (const layer of [LAYER_CLUSTERED_CIRCLE, LAYER_CLUSTERED_CIRCLE_LOW_ZOOM]) {
       map.on("click", layer, (e: MapEventTypeFull) => {
-        const features = map.queryRenderedFeatures(e.point, { layers: [layer] });
-        if (!features.length) return;
-        const zoomNow = map.getZoom();
-        const point = features[0].geometry as GeoJSON.Point;
-        map.easeTo({ center: point.coordinates as [number, number], zoom: zoomNow + 2 });
-      });
+        const features = map.queryRenderedFeatures(e.point, { layers: [layer] })
+        if (!features.length) return
+        const zoomNow = map.getZoom()
+        const point = features[0].geometry as GeoJSON.Point
+        map.easeTo({ center: point.coordinates as [number, number], zoom: zoomNow + 2 })
+      })
     }
-    // Handle unclustered point clicks
-    function handlePointClick(e: MapEventTypeFull) {
-      if (!e.features?.length || !mapRef.current) return;
-      const feature = e.features[0] as any;
-      const props = feature.properties || {};
-      // If a node_id exists, open the full sidebar via backend
-      if (props.node_id) {
-        const nodeId = String(props.node_id);
-        fillSidebarWithOsmDataAndShow(
-          nodeId,
-          mapRef.current,
-          setSidebarAction,
-          setSidebarData,
-          setSidebarLeftShown,
-          false,
-        );
-        addNodeIdToHash(nodeId);
-      } else {
-        // Otherwise show a simple popup with navigation links
-        const [lon, lat] = feature.geometry.coordinates as [number, number];
-        const html = buildPopupHtml(props, [lon, lat]);
-        new maplibregl.Popup().setLngLat([lon, lat]).setHTML(html).addTo(mapRef.current);
-      }
-    }
-    map.on("click", LAYER_UNCLUSTERED, handlePointClick);
-    map.on("click", LAYER_UNCLUSTERED_LOW_ZOOM, handlePointClick);
-    // If a node_id is provided via URL, load it on init
-    const params = parseParametersFromUrl();
-    if (params.node_id && mapRef.current) {
-      fillSidebarWithOsmDataAndShow(
-        params.node_id,
-        mapRef.current,
-        setSidebarAction,
-        setSidebarData,
-        setSidebarLeftShown,
-        true,
-      );
-    }
-  }, [
-    latitude,
-    longitude,
-    zoom,
-    setSidebarAction,
-    setSidebarData,
-    language,
-    countriesData,
-    addMaplibreGeocoder,
-  ]);
 
-  // Update the map style when countries data or language changes
-  useEffect(() => {
-    if (mapRef.current === null) return;
-    const map = mapRef.current;
-    addMaplibreGeocoder(map);
-    if (countriesDataLanguage !== language) return;
-    map.setStyle(mapStyle(language.toUpperCase(), countriesData));
-    // When the style is reloaded, our handler on styledata will re-inject layers
-  }, [countriesData, countriesDataLanguage, language, addMaplibreGeocoder]);
+    function handlePointClick(e: MapEventTypeFull) {
+      if (!e.features?.length || !mapRef.current) return
+      const feature = e.features[0] as any
+      const props = feature.properties || {}
+      const [lon, lat] = feature.geometry.coordinates as [number, number]
+      const html = buildPopupHtml(props, [lon, lat])
+      new maplibregl.Popup().setLngLat([lon, lat]).setHTML(html).addTo(mapRef.current)
+    }
+    map.on("click", LAYER_UNCLUSTERED, handlePointClick)
+    map.on("click", LAYER_UNCLUSTERED_LOW_ZOOM, handlePointClick)
+
+    return () => {
+      map.remove()
+    }
+  }, [])
 
   return (
-    <>
-      {sidebarLeftShown && (
-        <SidebarLeft
-          action={sidebarAction}
-          data={sidebarData}
-          closeSidebar={closeSidebarLeft}
-          visible={sidebarLeftShown}
-          marker={marker}
-          openChangesetId={openChangesetId}
-          setOpenChangesetId={setOpenChangesetId}
-        />
+    <div className="relative h-screen w-full">
+      <div ref={mapContainer} className="h-full w-full" />
+      {isLoading && (
+        <div className="absolute inset-0 flex items-center justify-center bg-[#009140] bg-opacity-90">
+          <div className="text-white text-xl">Cargando desfibriladores...</div>
+        </div>
       )}
-      <div className="map-wrap">
-        <div ref={mapContainer} className="map" />
-      </div>
-      <FooterDiv
-        startAEDAdding={(mobile) => checkConditionsThenCall(() => startAEDAdding(mobile))}
-        mobileCancel={mobileCancel}
-        showFormMobile={showFormMobile}
-        buttonsConfiguration={footerButtonType}
-      />
-    </>
-  );
-};
-
-interface MapViewProps {
-  openChangesetId: string;
-  setOpenChangesetId: (openChangesetId: string) => void;
+    </div>
+  )
 }
 
-export default MapView;
+/**
+ * Escape HTML entities to avoid injection in popups.
+ */
+function escapeHtml(s: string) {
+  return s.replace(
+    /[&<>"']/g,
+    (c) => (({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }) as const)[c]!,
+  )
+}
+
+/**
+ * Build a popup HTML string using available properties.
+ */
+function buildPopupHtml(props: Record<string, unknown>, coords: [number, number]) {
+  const [lon, lat] = coords
+  const name = (props.name as string) || (props.organismo as string) || (props.operator as string) || ""
+  const address =
+    (props.address as string) || [props.direccion, props.municipio, props.provincia].filter(Boolean).join(", ") || ""
+  const location = (props["defibrillator:location"] as string) || (props.ubicacion as string) || ""
+  const oh = (props.opening_hours as string) || (props.horario as string) || ""
+  const model = (props.model as string) || ""
+  const ref = (props.ref as string) || ""
+  const phone = (props.phone as string) || ""
+  const description = (props.description as string) || ""
+  const access = (props.access as string) || "yes"
+
+  const accessLabels: Record<string, string> = {
+    yes: "Acceso público",
+    customers: "Solo clientes",
+    private: "Privado",
+    permissive: "Con permiso",
+    no: "No disponible",
+  }
+
+  const accessColors: Record<string, string> = {
+    yes: "#009140",
+    customers: "#FFA500",
+    private: "#FF6B6B",
+    permissive: "#4ECDC4",
+    no: "#FF0000",
+  }
+
+  const rows: string[] = []
+  rows.push(
+    `<div style="background-color: ${accessColors[access] || "#009140"}; color: white; padding: 10px; margin: -15px -15px 10px -15px; border-radius: 3px 3px 0 0;">
+      <h3 style="margin: 0; font-size: 16px; font-weight: bold;">Desfibrilador (AED)</h3>
+    </div>`,
+  )
+  rows.push(
+    `<div style="padding: 5px 0;"><strong style="color: ${accessColors[access] || "#009140"};">🔓 ${accessLabels[access] || "Acceso público"}</strong></div>`,
+  )
+
+  if (name) rows.push(`<div style="margin: 5px 0;"><strong>🏢 Nombre:</strong> ${escapeHtml(name)}</div>`)
+  if (address) rows.push(`<div style="margin: 5px 0;"><strong>🏠 Dirección:</strong> ${escapeHtml(address)}</div>`)
+  if (location) rows.push(`<div style="margin: 5px 0;"><strong>📍 Ubicación:</strong> ${escapeHtml(location)}</div>`)
+  if (oh) rows.push(`<div style="margin: 5px 0;"><strong>🕐 Horario:</strong> ${escapeHtml(oh)}</div>`)
+  if (model) rows.push(`<div style="margin: 5px 0;"><strong>🔧 Modelo:</strong> ${escapeHtml(model)}</div>`)
+  if (ref) rows.push(`<div style="margin: 5px 0;"><strong>🔢 Ref:</strong> ${escapeHtml(ref)}</div>`)
+  if (phone) rows.push(`<div style="margin: 5px 0;"><strong>📞 Teléfono:</strong> ${escapeHtml(phone)}</div>`)
+  if (description)
+    rows.push(`<div style="margin: 5px 0;"><strong>ℹ️ Descripción:</strong> ${escapeHtml(description)}</div>`)
+
+  // Add navigation links using coordinates
+  const googleLink = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}`
+  const osmLink = `https://www.openstreetmap.org/directions?engine=graphhopper_car&route=${lat}%2C${lon}`
+  rows.push(
+    `<div style="margin-top: 15px; padding-top: 10px; border-top: 1px solid #e0e0e0;">
+      <a href="${googleLink}" target="_blank" rel="noopener" 
+         style="display: inline-block; background-color: #4285F4; color: white; padding: 8px 16px; 
+                text-decoration: none; border-radius: 4px; font-weight: bold; text-align: center; width: 100%; margin-bottom: 8px;">
+        🗺️ Navegar con Google Maps
+      </a>
+      <a href="${osmLink}" target="_blank" rel="noopener"
+         style="display: inline-block; background-color: #7EBC6F; color: white; padding: 8px 16px; 
+                text-decoration: none; border-radius: 4px; font-weight: bold; text-align: center; width: 100%;">
+        🗺️ Navegar con OpenStreetMap
+      </a>
+    </div>`,
+  )
+  return `<div style="min-width: 250px; font-family: Arial, sans-serif;">${rows.join("")}</div>`
+}
+
+/**
+ * Load the GeoJSON data and ensure that the source and layers are present.
+ */
+async function ensureGeojsonLayers(map: maplibregl.Map) {
+  // Fetch the GeoJSON data as an object
+  const res = await fetch(GEOJSON_URL, { cache: "no-store" })
+  if (!res.ok) {
+    console.error(`[EU_osm] HTTP ${res.status} al cargar ${GEOJSON_URL}`)
+    return
+  }
+  const data = (await res.json()) as GeoJSON.FeatureCollection
+  const features = data.features || []
+  console.log(`[EU_osm] Cargadas ${features.length} features`)
+
+  // If the source already exists, just update its data
+  const existing = map.getSource(GEOJSON_SOURCE_ID) as any
+  if (existing && typeof existing.setData === "function") {
+    existing.setData(data)
+    return
+  }
+
+  // Otherwise, remove any leftover layers (defensive) and add our source
+  for (const id of [
+    LAYER_CLUSTERED_CIRCLE,
+    LAYER_CLUSTERED_CIRCLE_LOW_ZOOM,
+    LAYER_UNCLUSTERED,
+    LAYER_UNCLUSTERED_LOW_ZOOM,
+  ]) {
+    if (map.getLayer(id)) map.removeLayer(id)
+  }
+  if (map.getSource(GEOJSON_SOURCE_ID)) {
+    map.removeSource(GEOJSON_SOURCE_ID)
+  }
+
+  // Add the GeoJSON source with clustering enabled
+  map.addSource(GEOJSON_SOURCE_ID, {
+    type: "geojson",
+    data,
+    cluster: true,
+    clusterMaxZoom: 15,
+    maxzoom: 16,
+    clusterRadius: 20,
+  } as any)
+
+  // Capa para clusters en zoom alto
+  map.addLayer({
+    id: LAYER_CLUSTERED_CIRCLE,
+    type: "circle",
+    source: GEOJSON_SOURCE_ID,
+    filter: ["has", "point_count"],
+    minzoom: 10,
+    paint: {
+      "circle-color": [
+        "step",
+        ["get", "point_count"],
+        "#88b04b", // verde para pocos puntos
+        10,
+        "#f1c40f", // amarillo para cantidad media
+        50,
+        "#e74c3c", // rojo para muchos puntos
+      ],
+      "circle-radius": ["step", ["get", "point_count"], 14, 10, 20, 50, 28],
+      "circle-stroke-width": 2,
+      "circle-stroke-color": "#ffffff",
+    },
+  })
+
+  // Capa para clusters en zoom bajo
+  map.addLayer({
+    id: LAYER_CLUSTERED_CIRCLE_LOW_ZOOM,
+    type: "circle",
+    source: GEOJSON_SOURCE_ID,
+    filter: ["has", "point_count"],
+    maxzoom: 10,
+    paint: {
+      "circle-color": "#88b04b",
+      "circle-radius": 10,
+      "circle-stroke-width": 1.5,
+      "circle-stroke-color": "#ffffff",
+    },
+  })
+
+  // Etiquetas de clusters
+  map.addLayer({
+    id: "clustered-label",
+    type: "symbol",
+    source: GEOJSON_SOURCE_ID,
+    filter: ["has", "point_count"],
+    layout: {
+      "text-field": "{point_count_abbreviated}",
+      "text-size": 12,
+      "text-allow-overlap": true,
+    },
+    paint: {
+      "text-color": "#ffffff",
+    },
+  })
+
+  // Capa para puntos individuales en zoom alto
+  map.addLayer({
+    id: LAYER_UNCLUSTERED,
+    type: "circle",
+    source: GEOJSON_SOURCE_ID,
+    filter: ["!", ["has", "point_count"]],
+    minzoom: 10,
+    paint: {
+      "circle-radius": 7,
+      "circle-color": "#e81224",
+      "circle-stroke-width": 2,
+      "circle-stroke-color": "#ffffff",
+    },
+  })
+
+  // Capa para puntos individuales en zoom bajo
+  map.addLayer({
+    id: LAYER_UNCLUSTERED_LOW_ZOOM,
+    type: "circle",
+    source: GEOJSON_SOURCE_ID,
+    filter: ["!", ["has", "point_count"]],
+    maxzoom: 10,
+    paint: {
+      "circle-radius": 5,
+      "circle-color": "#e81224",
+      "circle-stroke-width": 1.5,
+      "circle-stroke-color": "#ffffff",
+    },
+  })
+}
