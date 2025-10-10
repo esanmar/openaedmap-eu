@@ -36,6 +36,55 @@ import mapStyle, {
 import SidebarLeft from "./sidebar-left";
 
 /**
+ * Helper function that fetches details for a given OSM node ID and opens
+ * the sidebar. This mirrors the implementation from the original
+ * OpenAEDMap frontend. Without this function the call in handlePointClick
+ * causes a ReferenceError.
+ */
+function fillSidebarWithOsmDataAndShow(
+  nodeId: string,
+  mapInstance: maplibregl.Map,
+  setSidebarAction: (action: SidebarAction) => void,
+  setSidebarData: (data: DefibrillatorData) => void,
+  setSidebarLeftShown: (sidebarLeftShown: boolean) => void,
+  jumpInsteadOfEaseTo: boolean,
+) {
+  const result = fetchNodeDataFromBackend(nodeId);
+  result.then((data) => {
+    if (data) {
+      const zoomLevelForDetailedView = 17;
+      const currentZoomLevel = mapInstance.getZoom();
+      if (currentZoomLevel < zoomLevelForDetailedView) {
+        if (jumpInsteadOfEaseTo) {
+          mapInstance.jumpTo({
+            zoom: zoomLevelForDetailedView,
+            center: [data.lon, data.lat],
+          });
+        } else {
+          mapInstance.easeTo({
+            zoom: zoomLevelForDetailedView,
+            around: { lon: data.lon, lat: data.lat },
+          });
+        }
+      } else if (jumpInsteadOfEaseTo) {
+        mapInstance.jumpTo({
+          zoom: currentZoomLevel,
+          center: [data.lon, data.lat],
+        });
+      } else {
+        mapInstance.easeTo({
+          zoom: currentZoomLevel,
+          around: { lon: data.lon, lat: data.lat },
+        });
+      }
+      setSidebarData(data);
+      setSidebarAction(SidebarAction.showDetails);
+      setSidebarLeftShown(true);
+    }
+  });
+}
+
+/**
  * A Map component that loads a local GeoJSON file in the same
  * format expected by the OpenAEDMap frontend. It preserves the
  * original behaviour (cluster colouring, zoom interactions, sidebar
