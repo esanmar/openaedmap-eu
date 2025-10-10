@@ -4,6 +4,7 @@ import maplibregl, { type MapGeoJSONFeature } from "maplibre-gl"
 import "maplibre-gl/dist/maplibre-gl.css"
 import { useEffect, useRef, useState } from "react"
 import "./map.css"
+import type GeoJSON from "geojson"
 
 // Tipos para los datos del desfibrilador
 interface DefibrillatorProperties {
@@ -135,7 +136,7 @@ export default function MapView() {
         const features = map.queryRenderedFeatures(e.point, { layers: [layer] })
         if (!features.length) return
         const zoomNow = map.getZoom()
-        const point = features[0].geometry as GeoJSON.Point
+        const point = features[0].geometry as { type: string; coordinates: [number, number] }
         map.easeTo({ center: point.coordinates as [number, number], zoom: zoomNow + 2 })
       })
     }
@@ -329,22 +330,6 @@ async function ensureGeojsonLayers(map: maplibregl.Map) {
       "circle-radius": 10,
       "circle-stroke-width": 1.5,
       "circle-stroke-color": "#ffffff",
-    },
-  })
-
-  // Etiquetas de clusters
-  map.addLayer({
-    id: "clustered-label",
-    type: "symbol",
-    source: GEOJSON_SOURCE_ID,
-    filter: ["has", "point_count"],
-    layout: {
-      "text-field": "{point_count_abbreviated}",
-      "text-size": 12,
-      "text-allow-overlap": true,
-    },
-    paint: {
-      "text-color": "#ffffff",
     },
   })
 
