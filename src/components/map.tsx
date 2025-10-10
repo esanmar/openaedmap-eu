@@ -35,6 +35,7 @@ import mapStyle, {
 } from "./map_style";
 import SidebarLeft from "./sidebar-left";
 
+
 /**
  * Helper function that fetches details for a given OSM node ID and opens
  * the sidebar. This mirrors the implementation from the original
