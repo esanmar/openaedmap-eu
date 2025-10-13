@@ -1,10 +1,10 @@
 import MaplibreGeocoder, {
-  type MaplibreGeocoderOptions,
+	type MaplibreGeocoderOptions,
 } from "@maplibre/maplibre-gl-geocoder";
 import "@maplibre/maplibre-gl-geocoder/dist/maplibre-gl-geocoder.css";
 import maplibregl, {
-  type MapGeoJSONFeature,
-  type MapMouseEvent,
+	type MapGeoJSONFeature,
+	type MapMouseEvent,
 } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { type FC, useCallback, useEffect, useRef, useState } from "react";
@@ -14,12 +14,12 @@ import { fetchCountriesData, fetchNodeDataFromBackend } from "~/backend";
 import nominatimGeocoder from "~/components/nominatimGeocoder";
 import { useLanguage } from "~/i18n";
 import {
-  addNodeIdToHash,
-  getMapLocation,
-  locationParameter,
-  parseParametersFromUrl,
-  removeNodeIdFromHash,
-  saveLocationToLocalStorage,
+	addNodeIdToHash,
+	getMapLocation,
+	locationParameter,
+	parseParametersFromUrl,
+	removeNodeIdFromHash,
+	saveLocationToLocalStorage,
 } from "~/location";
 import ButtonsType from "~/model/buttonsType";
 import type { DefibrillatorData } from "~/model/defibrillatorData";
@@ -28,536 +28,467 @@ import SidebarAction from "~/model/sidebarAction";
 import FooterDiv from "./footer";
 import "./map.css";
 import mapStyle, {
-  LAYER_CLUSTERED_CIRCLE,
-  LAYER_CLUSTERED_CIRCLE_LOW_ZOOM,
-  LAYER_UNCLUSTERED,
-  LAYER_UNCLUSTERED_LOW_ZOOM,
+	LAYER_CLUSTERED_CIRCLE,
+	LAYER_CLUSTERED_CIRCLE_LOW_ZOOM,
+	LAYER_UNCLUSTERED,
+	LAYER_UNCLUSTERED_LOW_ZOOM,
 } from "./map_style";
 import SidebarLeft from "./sidebar-left";
 
-/**
- * Helper function that fetches details for a given OSM node ID and opens
- * the sidebar. This mirrors the implementation from the original
- * OpenAEDMap frontend. Without this function the call in handlePointClick
- * causes a ReferenceError.
- */
-function fillSidebarWithOsmDataAndShow(
-  nodeId: string,
-  mapInstance: maplibregl.Map,
-  setSidebarAction: (action: SidebarAction) => void,
-  setSidebarData: (data: DefibrillatorData) => void,
-  setSidebarLeftShown: (sidebarLeftShown: boolean) => void,
-  jumpInsteadOfEaseTo: boolean,
-) {
-  const result = fetchNodeDataFromBackend(nodeId);
-  result.then((data) => {
-    if (data) {
-      const zoomLevelForDetailedView = 17;
-      const currentZoomLevel = mapInstance.getZoom();
-      if (currentZoomLevel < zoomLevelForDetailedView) {
-        if (jumpInsteadOfEaseTo) {
-          mapInstance.jumpTo({
-            zoom: zoomLevelForDetailedView,
-            center: [data.lon, data.lat],
-          });
-        } else {
-          mapInstance.easeTo({
-            zoom: zoomLevelForDetailedView,
-            around: { lon: data.lon, lat: data.lat },
-          });
-        }
-      } else if (jumpInsteadOfEaseTo) {
-        mapInstance.jumpTo({
-          zoom: currentZoomLevel,
-          center: [data.lon, data.lat],
-        });
-      } else {
-        mapInstance.easeTo({
-          zoom: currentZoomLevel,
-          around: { lon: data.lon, lat: data.lat },
-        });
-      }
-      setSidebarData(data);
-      setSidebarAction(SidebarAction.showDetails);
-      setSidebarLeftShown(true);
-    }
-  });
-  // Expose the helper globally so compiled code that relies on a global
-  // function can call it. Without this assignment, a ReferenceError will
-  // occur when clicking on a feature in the map. See issue where
-  // fillSidebarWithOsmDataAndShow was not defined in the global scope.
-  (window as any).fillSidebarWithOsmDataAndShow = fillSidebarWithOsmDataAndShow;
-}
-
-/**
- * A Map component that loads a local GeoJSON file in the same
- * format expected by the OpenAEDMap frontend. It preserves the
- * original behaviour (cluster colouring, zoom interactions, sidebar
- * opening) while sourcing data from a static file instead of the
- * OSM vector tile backend.
- */
-
-// Identifier for our custom GeoJSON source.
+/* === AÑADIDO: constantes y helper para usar tu GeoJSON como fuente por defecto === */
 const GEOJSON_SOURCE_ID = "aed-geojson";
-// Path to the converted GeoJSON file. Change this when updating the data.
+// Usa tu archivo convertido a formato OSM-like si lo tienes; si no, apunta a /data/EU.geojson
 const GEOJSON_URL = "/data/EU_osm.geojson";
 
-/**
- * Escape HTML entities to avoid injection in popups.
- */
-function escapeHtml(s: string) {
-  return s.replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" } as const)[c]!,
-  );
-}
-
-/**
- * Build a popup HTML string using available properties. When a
- * feature doesn't come from OSM, we don't have a full sidebar so we
- * provide a simple popup with name, address, location and opening
- * hours. Navigation links are added using the coordinates so users
- * can still navigate to the AED.
- */
-function buildPopupHtml(props: Record<string, unknown>, coords: [number, number]) {
-  const [lon, lat] = coords;
-  const name =
-    (props.name as string) || (props.organismo as string) || (props.operator as string) || "";
-  const address =
-    (props.address as string) ||
-    [props.direccion, props.municipio, props.provincia].filter(Boolean).join(", ") ||
-    "";
-  const location =
-    (props["defibrillator:location"] as string) || (props.ubicacion as string) || "";
-  const oh = (props.opening_hours as string) || (props.horario as string) || "";
-  const rows: string[] = [];
-  if (name) rows.push(`<div><strong>${escapeHtml(name)}</strong></div>`);
-  if (address) rows.push(`<div>${escapeHtml(address)}</div>`);
-  if (location) rows.push(`<div><em>${escapeHtml(location)}</em></div>`);
-  if (oh) rows.push(`<div><small>Horario: ${escapeHtml(oh)}</small></div>`);
-  // Add navigation links using coordinates
-  const googleLink = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}`;
-  const osmLink = `https://www.openstreetmap.org/directions?engine=graphhopper_car&route=${lat}%2C${lon}`;
-  rows.push(
-    `<div style="margin-top:0.5rem"><a href="${googleLink}" target="_blank" rel="noopener">Navegación con Google Maps</a> · <a href="${osmLink}" target="_blank" rel="noopener">Navegación con OpenStreetMap</a></div>`,
-  );
-  return rows.join("");
-}
-
-/**
- * Load the GeoJSON data and ensure that the source and layers are present.
- * This function is idempotent: if the source exists it updates the data,
- * otherwise it creates the source and layers. Clustering is enabled
- * consistent with the original map (maxzoom 16, cluster up to 15).
- */
 async function ensureGeojsonLayers(map: maplibregl.Map) {
-  // Fetch the GeoJSON data as an object
-  const res = await fetch(GEOJSON_URL, { cache: "no-store" });
-  if (!res.ok) {
-    console.error(`[EU_osm] HTTP ${res.status} al cargar ${GEOJSON_URL}`);
-    return;
-  }
-  const data = (await res.json()) as GeoJSON.FeatureCollection;
-  const features = data.features || [];
-  if (!features.length) {
-    console.warn("[EU_osm] No hay features en el GeoJSON.");
-  }
-  // If the source already exists, just update its data
-  const existing = map.getSource(GEOJSON_SOURCE_ID) as any;
-  if (existing && typeof existing.setData === "function") {
-    existing.setData(data);
-    return;
-  }
-  // Otherwise, remove any leftover layers (defensive) and add our source
-  for (const id of [
-    LAYER_CLUSTERED_CIRCLE,
-    LAYER_CLUSTERED_CIRCLE_LOW_ZOOM,
-    LAYER_UNCLUSTERED,
-    LAYER_UNCLUSTERED_LOW_ZOOM,
-  ]) {
-    if (map.getLayer(id)) map.removeLayer(id);
-  }
-  if (map.getSource(GEOJSON_SOURCE_ID)) {
-    map.removeSource(GEOJSON_SOURCE_ID);
-  }
-  // Add the GeoJSON source with clustering enabled. According to the
-  // original map style, the defibrillator vector tiles stop at zoom 16【346339423607823†L53-L56】.
-  map.addSource(GEOJSON_SOURCE_ID, {
-    type: "geojson",
-    data,
-    cluster: true,
-    clusterMaxZoom: 15, // cluster up to zoom 15
-    maxzoom: 16, // consistent with style【346339423607823†L53-L56】
-    clusterRadius: 20,
-  } as any);
-  // Add layers replicating the original map style. The IDs must match
-  // those imported from map_style so that event handlers continue to work.
-  map.addLayer({
-    id: LAYER_CLUSTERED_CIRCLE,
-    type: "circle",
-    source: GEOJSON_SOURCE_ID,
-    filter: ["has", "point_count"],
-    paint: {
-      "circle-color": [
-        "step",
-        ["get", "point_count"],
-        "#88b04b",
-        10,
-        "#f1c40f",
-        50,
-        "#e74c3c",
-      ],
-      "circle-radius": [
-        "step",
-        ["get", "point_count"],
-        14,
-        10,
-        20,
-        50,
-        28,
-      ],
-      "circle-stroke-width": 2,
-      "circle-stroke-color": "#ffffff",
-    },
-  });
-  map.addLayer({
-    id: LAYER_CLUSTERED_CIRCLE_LOW_ZOOM,
-    type: "circle",
-    source: GEOJSON_SOURCE_ID,
-    filter: ["has", "point_count"],
-    paint: {
-      "circle-color": "#88b04b",
-      "circle-radius": 10,
-      "circle-stroke-width": 1.5,
-      "circle-stroke-color": "#ffffff",
-    },
-  });
-  map.addLayer({
-    id: LAYER_UNCLUSTERED,
-    type: "circle",
-    source: GEOJSON_SOURCE_ID,
-    filter: ["!", ["has", "point_count"]],
-    paint: {
-      "circle-radius": 7,
-      "circle-color": "#e81224",
-      "circle-stroke-width": 2,
-      "circle-stroke-color": "#ffffff",
-    },
-  });
-  map.addLayer({
-    id: LAYER_UNCLUSTERED_LOW_ZOOM,
-    type: "circle",
-    source: GEOJSON_SOURCE_ID,
-    filter: ["!", ["has", "point_count"]],
-    paint: {
-      "circle-radius": 5,
-      "circle-color": "#e81224",
-      "circle-stroke-width": 1.5,
-      "circle-stroke-color": "#ffffff",
-    },
-  });
-  // Move our layers to the top of the style so they are not obscured by others
-  const topLayer = map.getStyle().layers?.slice(-1)[0]?.id;
-  if (topLayer) {
-    for (const id of [
-      LAYER_UNCLUSTERED_LOW_ZOOM,
-      LAYER_UNCLUSTERED,
-      LAYER_CLUSTERED_CIRCLE_LOW_ZOOM,
-      LAYER_CLUSTERED_CIRCLE,
-    ]) {
-      if (map.getLayer(id)) map.moveLayer(id, topLayer);
-    }
-  }
+	// quitar posibles capas existentes con los mismos IDs del style base
+	for (const id of [
+		LAYER_UNCLUSTERED,
+		LAYER_UNCLUSTERED_LOW_ZOOM,
+		LAYER_CLUSTERED_CIRCLE,
+		LAYER_CLUSTERED_CIRCLE_LOW_ZOOM,
+	]) {
+		if (map.getLayer(id)) map.removeLayer(id);
+	}
+	if (map.getSource(GEOJSON_SOURCE_ID)) map.removeSource(GEOJSON_SOURCE_ID);
+
+	// añadir tu fuente con clustering
+	map.addSource(GEOJSON_SOURCE_ID, {
+		type: "geojson",
+		data: GEOJSON_URL,
+		cluster: true,
+		clusterMaxZoom: 18,
+		clusterRadius: 25,
+	} as any);
+
+	// recrear capas con los mismos IDs que usa la app
+	map.addLayer({
+		id: LAYER_CLUSTERED_CIRCLE,
+		type: "circle",
+		source: GEOJSON_SOURCE_ID,
+		filter: ["has", "point_count"],
+		paint: {
+			"circle-color": [
+				"step",
+				["get", "point_count"],
+				"#88b04b",
+				10,
+				"#f1c40f",
+				50,
+				"#e74c3c",
+			],
+			"circle-radius": [
+				"step",
+				["get", "point_count"],
+				14,
+				10,
+				20,
+				50,
+				28,
+			],
+			"circle-stroke-width": 2,
+			"circle-stroke-color": "#ffffff",
+		},
+	});
+
+	map.addLayer({
+		id: LAYER_CLUSTERED_CIRCLE_LOW_ZOOM,
+		type: "circle",
+		source: GEOJSON_SOURCE_ID,
+		filter: ["has", "point_count"],
+		paint: {
+			"circle-color": "#88b04b",
+			"circle-radius": 10,
+			"circle-stroke-width": 1.5,
+			"circle-stroke-color": "#ffffff",
+		},
+	});
+
+	map.addLayer({
+		id: LAYER_UNCLUSTERED,
+		type: "circle",
+		source: GEOJSON_SOURCE_ID,
+		filter: ["!", ["has", "point_count"]],
+		paint: {
+			"circle-radius": 7,
+			"circle-color": "#e81224",
+			"circle-stroke-width": 2,
+			"circle-stroke-color": "#ffffff",
+		},
+	});
+
+	map.addLayer({
+		id: LAYER_UNCLUSTERED_LOW_ZOOM,
+		type: "circle",
+		source: GEOJSON_SOURCE_ID,
+		filter: ["!", ["has", "point_count"]],
+		paint: {
+			"circle-radius": 5,
+			"circle-color": "#e81224",
+			"circle-stroke-width": 1.5,
+			"circle-stroke-color": "#ffffff",
+		},
+	});
+
+	// mover arriba del todo por si alguna capa del style las tapa
+	const top = map.getStyle().layers?.slice(-1)[0]?.id;
+	if (top) {
+		for (const id of [
+			LAYER_UNCLUSTERED_LOW_ZOOM,
+			LAYER_UNCLUSTERED,
+			LAYER_CLUSTERED_CIRCLE_LOW_ZOOM,
+			LAYER_CLUSTERED_CIRCLE,
+		]) {
+			if (map.getLayer(id)) map.moveLayer(id, top);
+		}
+	}
+}
+/* === FIN AÑADIDO === */
+
+function fillSidebarWithOsmDataAndShow(
+	nodeId: string,
+	mapInstance: maplibregl.Map,
+	setSidebarAction: (action: SidebarAction) => void,
+	setSidebarData: (data: DefibrillatorData) => void,
+	setSidebarLeftShown: (sidebarLeftShown: boolean) => void,
+	jumpInsteadOfEaseTo: boolean,
+) {
+	const result = fetchNodeDataFromBackend(nodeId);
+	result.then((data) => {
+		if (data) {
+			const zoomLevelForDetailedView = 17;
+			const currentZoomLevel = mapInstance.getZoom();
+			// todo: possibly add handling of request error which will cause lnglat to be NaN, NaN
+			if (currentZoomLevel < zoomLevelForDetailedView) {
+				if (jumpInsteadOfEaseTo) {
+					mapInstance.jumpTo({
+						zoom: zoomLevelForDetailedView,
+						center: [data.lon, data.lat],
+					});
+				} else {
+					mapInstance.easeTo({
+						zoom: zoomLevelForDetailedView,
+						around: { lon: data.lon, lat: data.lat },
+					});
+				}
+			} else if (jumpInsteadOfEaseTo) {
+				mapInstance.jumpTo({
+					zoom: currentZoomLevel,
+					center: [data.lon, data.lat],
+				});
+			} else {
+				mapInstance.easeTo({
+					zoom: currentZoomLevel,
+					around: { lon: data.lon, lat: data.lat },
+				});
+			}
+			setSidebarData(data);
+			setSidebarAction(SidebarAction.showDetails);
+			setSidebarLeftShown(true);
+		}
+	});
 }
 
-/**
- * The main MapView component. It is largely based on the original
- * OpenAEDMap map component but calls `ensureGeojsonLayers` to load
- * our static dataset. When a `node_id` property exists it opens the
- * sidebar with full details via `fetchNodeDataFromBackend`; otherwise
- * it shows a simple popup using properties from the dataset.
- */
 const MapView: FC<MapViewProps> = ({ openChangesetId, setOpenChangesetId }) => {
-  const {
-    authState: { auth },
-    setModalState,
-    sidebarAction,
-    setSidebarAction,
-    sidebarData,
-    setSidebarData,
-    countriesData,
-    setCountriesData,
-    countriesDataLanguage,
-    setCountriesDataLanguage,
-  } = useAppContext();
-  const { t } = useTranslation();
-  const language = useLanguage();
-  const { longitude, latitude, zoom } = getMapLocation();
-  const mapContainer = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<maplibregl.Map | null>(null);
-  const maplibreGeocoderRef = useRef<MaplibreGeocoder | null>(null);
-  const controlsLocation = "bottom-right";
-  const [marker, setMarker] = useState<maplibregl.Marker | null>(null);
-  const [sidebarLeftShown, setSidebarLeftShown] = useState(false);
-  const [footerButtonType, setFooterButtonType] = useState(ButtonsType.Basic);
+	const {
+		authState: { auth },
+		setModalState,
+		sidebarAction,
+		setSidebarAction,
+		sidebarData,
+		setSidebarData,
+		countriesData,
+		setCountriesData,
+		countriesDataLanguage,
+		setCountriesDataLanguage,
+	} = useAppContext();
+	const { t } = useTranslation();
+	const language = useLanguage();
+	const { longitude, latitude, zoom } = getMapLocation();
+	const mapContainer = useRef<HTMLDivElement | null>(null);
+	const mapRef = useRef<maplibregl.Map | null>(null);
+	const maplibreGeocoderRef = useRef<MaplibreGeocoder | null>(null);
+	const controlsLocation = "bottom-right";
+	const [marker, setMarker] = useState<maplibregl.Marker | null>(null);
+	const [sidebarLeftShown, setSidebarLeftShown] = useState(false);
+	const [footerButtonType, setFooterButtonType] = useState(ButtonsType.Basic);
 
-  const deleteMarker = () => {
-    if (marker !== null) {
-      marker.remove();
-      setMarker(null);
-    }
-  };
+	const deleteMarker = () => {
+		if (marker !== null) {
+			marker.remove();
+			setMarker(null);
+		}
+	};
 
-  const closeSidebarLeft = () => {
-    setSidebarLeftShown(false);
-    deleteMarker();
-    removeNodeIdFromHash();
-    setFooterButtonType(ButtonsType.Basic);
-  };
+	const closeSidebarLeft = () => {
+		setSidebarLeftShown(false);
+		deleteMarker();
+		removeNodeIdFromHash();
+		setFooterButtonType(ButtonsType.Basic);
+	};
 
-  const checkConditionsThenCall = (callable: () => void) => {
-    if (mapRef.current === null) return;
-    const map = mapRef.current;
-    if (auth === null || !auth.authenticated()) {
-      setModalState({
-        ...initialModalState,
-        visible: true,
-        type: ModalType.NeedToLogin,
-      });
-    } else if (map.getZoom() < 15) {
-      setModalState({
-        ...initialModalState,
-        visible: true,
-        type: ModalType.NeedMoreZoom,
-        currentZoom: map.getZoom(),
-      });
-    } else callable();
-  };
+	const checkConditionsThenCall = (callable: () => void) => {
+		if (mapRef.current === null) return;
+		const map = mapRef.current;
+		if (auth === null || !auth.authenticated()) {
+			setModalState({
+				...initialModalState,
+				visible: true,
+				type: ModalType.NeedToLogin,
+			});
+		} else if (map.getZoom() < 15) {
+			setModalState({
+				...initialModalState,
+				visible: true,
+				type: ModalType.NeedMoreZoom,
+				currentZoom: map.getZoom(),
+			});
+		} else callable();
+	};
 
-  const mobileCancel = () => {
-    deleteMarker();
-    setSidebarLeftShown(false);
-    setFooterButtonType(ButtonsType.Basic);
-  };
+	const mobileCancel = () => {
+		deleteMarker();
+		setSidebarLeftShown(false);
+		setFooterButtonType(ButtonsType.Basic);
+	};
 
-  const showFormMobile = () => {
-    setSidebarLeftShown(true);
-    setFooterButtonType(ButtonsType.None);
-  };
+	const showFormMobile = () => {
+		setSidebarLeftShown(true);
+		setFooterButtonType(ButtonsType.None);
+	};
 
-  const startAEDAdding = (mobile: boolean) => {
-    if (mapRef.current === null) return;
-    const map = mapRef.current;
-    deleteMarker();
-    removeNodeIdFromHash();
-    setSidebarData(null);
-    setSidebarAction(SidebarAction.addNode);
-    setSidebarLeftShown(!mobile);
-    setFooterButtonType(mobile ? ButtonsType.MobileAddAed : ButtonsType.None);
-    const markerColour = "#e81224";
-    const mapCenter = map.getCenter();
-    const initialCoordinates: [number, number] = [mapCenter.lng, mapCenter.lat];
-    setMarker(
-      new maplibregl.Marker({ draggable: true, color: markerColour })
-        .setLngLat(initialCoordinates)
-        .setPopup(new maplibregl.Popup().setHTML(t("form.marker_popup_text")))
-        .addTo(mapRef.current)
-        .togglePopup(),
-    );
-  };
+	const startAEDAdding = (mobile: boolean) => {
+		if (mapRef.current === null) return;
+		const map = mapRef.current;
+		deleteMarker();
+		removeNodeIdFromHash();
+		setSidebarData(null);
+		setSidebarAction(SidebarAction.addNode);
+		setSidebarLeftShown(!mobile); // for mobile hide sidebar so marker is visible
+		setFooterButtonType(mobile ? ButtonsType.MobileAddAed : ButtonsType.None);
+		// add marker
+		const markerColour = "#e81224";
+		const mapCenter = map.getCenter();
+		const initialCoordinates: [number, number] = [mapCenter.lng, mapCenter.lat];
+		setMarker(
+			new maplibregl.Marker({
+				draggable: true,
+				color: markerColour,
+			})
+				.setLngLat(initialCoordinates)
+				.setPopup(new maplibregl.Popup().setHTML(t("form.marker_popup_text")))
+				.addTo(mapRef.current)
+				.togglePopup(),
+		);
+	};
 
-  // Load country boundaries (unchanged)
-  useEffect(() => {
-    const fetchData = async () => {
-      const data = await fetchCountriesData(language);
-      if (data !== null) {
-        setCountriesData(data);
-        setCountriesDataLanguage(language);
-      }
-    };
-    fetchData().catch(console.error);
-  }, [language, setCountriesDataLanguage, setCountriesData]);
+	useEffect(() => {
+		const fetchData = async () => {
+			const data = await fetchCountriesData(language);
+			if (data !== null) {
+				setCountriesData(data);
+				setCountriesDataLanguage(language);
+			}
+		};
+		fetchData().catch(console.error);
+	}, [language, setCountriesDataLanguage, setCountriesData]);
 
-  // Add geocoder control (unchanged)
-  const addMaplibreGeocoder = useCallback(
-    (map: maplibregl.Map) => {
-      if (maplibreGeocoderRef.current !== null) {
-        map.removeControl(maplibreGeocoderRef.current);
-      }
-      const newMaplibreGeocoder = new MaplibreGeocoder(nominatimGeocoder, {
-        maplibregl,
-        placeholder: t("sidebar.find_location"),
-        reverseGeocode: false,
-      } as MaplibreGeocoderOptions);
-      newMaplibreGeocoder.setLanguage(language);
-      map.addControl(newMaplibreGeocoder);
-      maplibreGeocoderRef.current = newMaplibreGeocoder;
-    },
-    [t, language],
-  );
+	const addMaplibreGeocoder = useCallback(
+		(map: maplibregl.Map) => {
+			if (maplibreGeocoderRef.current !== null) {
+				map.removeControl(maplibreGeocoderRef.current);
+			}
+			const newMaplibreGeocoder = new MaplibreGeocoder(nominatimGeocoder, {
+				maplibregl,
+				placeholder: t("sidebar.find_location"),
+				reverseGeocode: false,
+			} as MaplibreGeocoderOptions);
+			newMaplibreGeocoder.setLanguage(language);
+			map.addControl(newMaplibreGeocoder);
+			maplibreGeocoderRef.current = newMaplibreGeocoder;
+		},
+		[t, language],
+	);
 
-  // Initialize the map
-  useEffect(() => {
-    if (mapContainer.current === null) return;
-    if (mapRef.current !== null) return;
-    const map = new maplibregl.Map({
-      container: mapContainer.current,
-      hash: locationParameter,
-      style: mapStyle(language.toUpperCase(), countriesData),
-      center: [longitude, latitude],
-      zoom: zoom,
-      minZoom: 3,
-      maxZoom: 19,
-      maplibreLogo: false,
-      attributionControl: false,
-    });
-    // Provide a 1x1 transparent image for missing sprites
-    map.on("styleimagemissing", (e) => {
-      if (map.hasImage(e.id)) return;
-      // @ts-ignore
-      const img = new ImageData(new Uint8ClampedArray(4), 1, 1);
-      map.addImage(e.id, img, { sdf: false });
-    });
-    map.addControl(
-      new maplibregl.AttributionControl({ customAttribution: "" }),
-    );
-    addMaplibreGeocoder(map);
-    mapRef.current = map;
-    map.scrollZoom.setWheelZoomRate(1);
-    map.dragRotate.disable();
-    map.touchZoomRotate.disableRotation();
-    map.keyboard.disableRotation();
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), controlsLocation);
-    map.addControl(
-      new maplibregl.GeolocateControl({
-        positionOptions: { enableHighAccuracy: true },
-        fitBoundsOptions: { animate: false },
-      }),
-      controlsLocation,
-    );
-    // On load, create layers
-    map.on("load", () => {
-      ensureGeojsonLayers(map).catch(console.error);
-    });
-    // On style change (e.g. switching language), only add layers if source is missing
-    map.on("styledata", () => {
-      if (!map.getSource(GEOJSON_SOURCE_ID)) {
-        ensureGeojsonLayers(map).catch(console.error);
-      }
-    });
-    // Hover cursor behaviour
-    for (const layer of [
-      LAYER_CLUSTERED_CIRCLE,
-      LAYER_UNCLUSTERED,
-      LAYER_CLUSTERED_CIRCLE_LOW_ZOOM,
-      LAYER_UNCLUSTERED_LOW_ZOOM,
-    ]) {
-      map.on("mouseenter", layer, () => {
-        map.getCanvas().style.cursor = "pointer";
-      });
-      map.on("mouseleave", layer, () => {
-        map.getCanvas().style.cursor = "";
-      });
-    }
-    map.on("moveend", saveLocationToLocalStorage);
-    // Handle cluster clicks: zoom in
-    type MapEventTypeFull = MapMouseEvent & { features?: MapGeoJSONFeature[] };
-    for (const layer of [LAYER_CLUSTERED_CIRCLE, LAYER_CLUSTERED_CIRCLE_LOW_ZOOM]) {
-      map.on("click", layer, (e: MapEventTypeFull) => {
-        const features = map.queryRenderedFeatures(e.point, { layers: [layer] });
-        if (!features.length) return;
-        const zoomNow = map.getZoom();
-        const point = features[0].geometry as GeoJSON.Point;
-        map.easeTo({ center: point.coordinates as [number, number], zoom: zoomNow + 2 });
-      });
-    }
-    // Handle unclustered point clicks
-    function handlePointClick(e: MapEventTypeFull) {
-      if (!e.features?.length || !mapRef.current) return;
-      const feature = e.features[0] as any;
-      const props = feature.properties || {};
-      // If a node_id exists, open the full sidebar via backend
-      if (props.node_id) {
-        const nodeId = String(props.node_id);
-        fillSidebarWithOsmDataAndShow(
-          nodeId,
-          mapRef.current,
-          setSidebarAction,
-          setSidebarData,
-          setSidebarLeftShown,
-          false,
-        );
-        addNodeIdToHash(nodeId);
-      } else {
-        // Otherwise show a simple popup with navigation links
-        const [lon, lat] = feature.geometry.coordinates as [number, number];
-        const html = buildPopupHtml(props, [lon, lat]);
-        new maplibregl.Popup().setLngLat([lon, lat]).setHTML(html).addTo(mapRef.current);
-      }
-    }
-    map.on("click", LAYER_UNCLUSTERED, handlePointClick);
-    map.on("click", LAYER_UNCLUSTERED_LOW_ZOOM, handlePointClick);
-    // If a node_id is provided via URL, load it on init
-    const params = parseParametersFromUrl();
-    if (params.node_id && mapRef.current) {
-      fillSidebarWithOsmDataAndShow(
-        params.node_id,
-        mapRef.current,
-        setSidebarAction,
-        setSidebarData,
-        setSidebarLeftShown,
-        true,
-      );
-    }
-  }, [
-    latitude,
-    longitude,
-    zoom,
-    setSidebarAction,
-    setSidebarData,
-    language,
-    countriesData,
-    addMaplibreGeocoder,
-  ]);
+	useEffect(() => {
+		if (mapContainer.current === null) return;
+		if (mapRef.current !== null) return; // stops map from initializing more than once
+		const map = new maplibregl.Map({
+			container: mapContainer.current,
+			hash: locationParameter,
+			style: mapStyle(language.toUpperCase(), countriesData),
+			center: [longitude, latitude],
+			zoom: zoom,
+			minZoom: 3,
+			maxZoom: 19,
+			maplibreLogo: false,
+			attributionControl: false,
+		});
 
-  // Update the map style when countries data or language changes
-  useEffect(() => {
-    if (mapRef.current === null) return;
-    const map = mapRef.current;
-    addMaplibreGeocoder(map);
-    if (countriesDataLanguage !== language) return;
-    map.setStyle(mapStyle(language.toUpperCase(), countriesData));
-    // When the style is reloaded, our handler on styledata will re-inject layers
-  }, [countriesData, countriesDataLanguage, language, addMaplibreGeocoder]);
+		/* === AÑADIDO: imagen 1x1 para cubrir sprites faltantes (marker_, etc.) === */
+		map.on("styleimagemissing", (e) => {
+			if (map.hasImage(e.id)) return;
+			// @ts-ignore - ImageData disponible en browsers
+			const img = new ImageData(new Uint8ClampedArray(4), 1, 1);
+			map.addImage(e.id, img, { sdf: false });
+		});
+		/* === FIN AÑADIDO === */
 
-  return (
-    <>
-      {sidebarLeftShown && (
-        <SidebarLeft
-          action={sidebarAction}
-          data={sidebarData}
-          closeSidebar={closeSidebarLeft}
-          visible={sidebarLeftShown}
-          marker={marker}
-          openChangesetId={openChangesetId}
-          setOpenChangesetId={setOpenChangesetId}
-        />
-      )}
-      <div className="map-wrap">
-        <div ref={mapContainer} className="map" />
-      </div>
-      <FooterDiv
-        startAEDAdding={(mobile) => checkConditionsThenCall(() => startAEDAdding(mobile))}
-        mobileCancel={mobileCancel}
-        showFormMobile={showFormMobile}
-        buttonsConfiguration={footerButtonType}
-      />
-    </>
-  );
+		map.addControl(
+			new maplibregl.AttributionControl({
+				customAttribution: "",
+			}),
+		);
+		addMaplibreGeocoder(map);
+		mapRef.current = map;
+		// how fast mouse scroll wheel zooms
+		map.scrollZoom.setWheelZoomRate(1);
+		// disable map rotation using right click + drag
+		map.dragRotate.disable();
+		// disable map rotation using touch rotation gesture
+		map.touchZoomRotate.disableRotation();
+		// disable map rotation using shift + arrows
+		map.keyboard.disableRotation();
+		map.addControl(
+			new maplibregl.NavigationControl({
+				showCompass: false,
+			}),
+			controlsLocation,
+		);
+		map.addControl(
+			new maplibregl.GeolocateControl({
+				positionOptions: {
+					enableHighAccuracy: true,
+				},
+				fitBoundsOptions: {
+					animate: false,
+				},
+			}),
+			controlsLocation,
+		);
+
+		for (const layer of [
+			LAYER_CLUSTERED_CIRCLE,
+			LAYER_UNCLUSTERED,
+			LAYER_CLUSTERED_CIRCLE_LOW_ZOOM,
+			LAYER_UNCLUSTERED_LOW_ZOOM,
+		]) {
+			map.on("mouseenter", layer, () => {
+				map.getCanvas().style.cursor = "pointer";
+			});
+			map.on("mouseleave", layer, () => {
+				map.getCanvas().style.cursor = "";
+			});
+		}
+		map.on("moveend", saveLocationToLocalStorage);
+		type MapEventType = MapMouseEvent & { features?: MapGeoJSONFeature[] };
+		for (const layer of [
+			LAYER_CLUSTERED_CIRCLE,
+			LAYER_CLUSTERED_CIRCLE_LOW_ZOOM,
+		]) {
+			map.on("click", layer, (e: MapEventType) => {
+				const features = map.queryRenderedFeatures(e.point, {
+					layers: [layer],
+				});
+				const zoom = map.getZoom();
+				const point = features[0].geometry as GeoJSON.Point;
+				map.easeTo({
+					center: point.coordinates as [number, number],
+					zoom: zoom + 2,
+				});
+			});
+		}
+		function showObjectWithProperties(e: MapEventType) {
+			if (e.features === undefined) return;
+			if (e.features[0].properties !== undefined && mapRef.current !== null) {
+				const osmNodeId = e.features[0].properties.node_id;
+				fillSidebarWithOsmDataAndShow(
+					osmNodeId,
+					mapRef.current,
+					setSidebarAction,
+					setSidebarData,
+					setSidebarLeftShown,
+					false,
+				);
+				addNodeIdToHash(osmNodeId);
+			}
+		}
+
+		// show sidebar on single element click
+		map.on("click", LAYER_UNCLUSTERED, showObjectWithProperties);
+		map.on("click", LAYER_UNCLUSTERED_LOW_ZOOM, showObjectWithProperties);
+
+		// if direct link to osm node then get its data and zoom in
+		const newParamsFromHash = parseParametersFromUrl();
+		if (newParamsFromHash.node_id && mapRef.current !== null) {
+			fillSidebarWithOsmDataAndShow(
+				newParamsFromHash.node_id,
+				mapRef.current,
+				setSidebarAction,
+				setSidebarData,
+				setSidebarLeftShown,
+				true,
+			);
+		}
+
+		/* === AÑADIDO: inyectar tu GeoJSON en load y en recargas de estilo === */
+		map.on("load", () => {
+			ensureGeojsonLayers(map).catch(console.error);
+		});
+		map.on("styledata", () => {
+			ensureGeojsonLayers(map).catch(console.error);
+		});
+		/* === FIN AÑADIDO === */
+	}, [
+		latitude,
+		longitude,
+		zoom,
+		setSidebarAction,
+		setSidebarData,
+		language,
+		countriesData,
+		addMaplibreGeocoder,
+	]);
+
+	useEffect(() => {
+		if (mapRef.current === null) return;
+		const map = mapRef.current;
+		addMaplibreGeocoder(map);
+		if (countriesDataLanguage !== language) return; // wait for countries data to be loaded
+		map.setStyle(mapStyle(language.toUpperCase(), countriesData));
+	}, [countriesData, countriesDataLanguage, language, addMaplibreGeocoder]);
+
+	return (
+		<>
+			{sidebarLeftShown && (
+				<SidebarLeft
+					action={sidebarAction}
+					data={sidebarData}
+					closeSidebar={closeSidebarLeft}
+					visible={sidebarLeftShown}
+					marker={marker}
+					openChangesetId={openChangesetId}
+					setOpenChangesetId={setOpenChangesetId}
+				/>
+			)}
+			<div className="map-wrap">
+				<div ref={mapContainer} className="map" />
+			</div>
+			<FooterDiv
+				startAEDAdding={(mobile) =>
+					checkConditionsThenCall(() => startAEDAdding(mobile))
+				}
+				mobileCancel={mobileCancel}
+				showFormMobile={showFormMobile}
+				buttonsConfiguration={footerButtonType}
+			/>
+		</>
+	);
 };
 
 interface MapViewProps {
-  openChangesetId: string;
-  setOpenChangesetId: (openChangesetId: string) => void;
+	openChangesetId: string;
+	setOpenChangesetId: (openChangesetId: string) => void;
 }
 
 export default MapView;
