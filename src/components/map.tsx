@@ -44,7 +44,7 @@ const GEOJSON_URL_BASE = "/data/EU_osm.geojson";
 const VERSION = "v=4"; // cache-buster
 const GEOJSON_URL = `${GEOJSON_URL_BASE}?${VERSION}`;
 
-/** Capa de texto para conteo de clúster (diagnóstico visual) */
+/** Capa de texto para conteo de clÃºster (diagnÃ³stico visual) */
 const LAYER_CLUSTER_COUNT = "aed-cluster-count";
 
 /** ---- Utils ---- */
@@ -79,11 +79,11 @@ function buildPopupHtml(p: AnyProps) {
   return rows.join("") || "<div>Desfibrilador</div>";
 }
 
-/** Carga el GeoJSON explícitamente y añade fuente + capas
- * con parámetros conservadores para evitar errores de teselado.
+/** Carga el GeoJSON explÃ­citamente y aÃ±ade fuente + capas
+ * con parÃ¡metros conservadores para evitar errores de teselado.
  */
 async function ensureGeojsonLayers(map: maplibregl.Map) {
-  // 0) Cargar GeoJSON como OBJETO (debug más claro)
+  // 0) Cargar GeoJSON como OBJETO (debug mÃ¡s claro)
   const res = await fetch(GEOJSON_URL, { cache: "no-store" });
   if (!res.ok) {
     console.error(`[EU_osm] HTTP ${res.status} al cargar ${GEOJSON_URL}`);
@@ -91,7 +91,7 @@ async function ensureGeojsonLayers(map: maplibregl.Map) {
   }
   const data = (await res.json()) as GeoJSON.FeatureCollection;
   const count = data.features?.length ?? 0;
-  console.log("[EU_osm] features:", count);
+
   if (!count) {
     console.warn("[EU_osm] No hay features en el GeoJSON.");
   }
@@ -108,20 +108,20 @@ async function ensureGeojsonLayers(map: maplibregl.Map) {
   }
   if (map.getSource(GEOJSON_SOURCE_ID)) map.removeSource(GEOJSON_SOURCE_ID);
 
-  // 2) Añadir fuente: OBJETO + clustering + tile opts seguros
+  // 2) AÃ±adir fuente: OBJETO + clustering + tile opts seguros
   // Importante: clusterMaxZoom < maxzoom (y compatible con las capas del estilo)
   map.addSource(GEOJSON_SOURCE_ID, {
     type: "geojson",
-    data, // 👈 objeto, no URL
-    cluster: true,
-    clusterMaxZoom: 16, // < maxzoom
-    maxzoom: 17, // > clusterMaxZoom
-    clusterRadius: 20,
+    data, // ðŸ‘ˆ objeto, no URL
+    cluster: false,
+    clusterMaxZoom: 15, // < maxzoom
+    maxzoom: 16, // > clusterMaxZoom
+    clusterRadius: 15,
     buffer: 32, // reduce riesgo "Geometry exceeds allowed extent"
     tolerance: 0.25,
   } as any);
 
-  // 3) Añadir capas con IDs que la app ya usa (y una extra de conteo)
+  // 3) AÃ±adir capas con IDs que la app ya usa (y una extra de conteo)
   map.addLayer({
     id: LAYER_CLUSTERED_CIRCLE,
     type: "circle",
@@ -205,7 +205,7 @@ async function ensureGeojsonLayers(map: maplibregl.Map) {
     }
   }
 
-  console.log("[EU_osm] capas inyectadas OK");
+  
 }
 
 function fillSidebarWithOsmDataAndShow(
@@ -493,7 +493,7 @@ const MapView: FC<MapViewProps> = ({ openChangesetId, setOpenChangesetId }) => {
         return;
       }
 
-      // Popup sencillo con info básica (nombre/dirección/ubicación)
+      // Popup sencillo con info bÃ¡sica (nombre/direcciÃ³n/ubicaciÃ³n)
       const [lng, lat] = (feat.geometry?.coordinates || []) as [number, number];
       const html = buildPopupHtml(props);
       new maplibregl.Popup().setLngLat([lng, lat]).setHTML(html).addTo(mapRef.current);
