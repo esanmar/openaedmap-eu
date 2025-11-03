@@ -96,7 +96,13 @@ async function ensureGeojsonLayers(map: maplibregl.Map) {
     console.warn("[EU_osm] No hay features en el GeoJSON.");
   }
 
-  // 1) Quitar capas con mismos IDs (del style base)
+  // 1) Si las capas ya existen, no hacer nada (evitar parpadeo)
+  if (map.getSource(GEOJSON_SOURCE_ID)) {
+    console.log("[EU_osm] Capas ya cargadas, evitando recreación");
+    return;
+  }
+
+  // 2) Quitar capas con mismos IDs del style base (solo si no existen las nuestras)
   for (const id of [
     LAYER_UNCLUSTERED,
     LAYER_UNCLUSTERED_LOW_ZOOM,
@@ -106,9 +112,8 @@ async function ensureGeojsonLayers(map: maplibregl.Map) {
   ]) {
     if (map.getLayer(id)) map.removeLayer(id);
   }
-  if (map.getSource(GEOJSON_SOURCE_ID)) map.removeSource(GEOJSON_SOURCE_ID);
 
-  // 2) AÃ±adir fuente: OBJETO + clustering + tile opts seguros
+   // 3) Añadir fuente: OBJETO + clustering + tile opts seguros
   // Importante: clusterMaxZoom < maxzoom (y compatible con las capas del estilo)
   map.addSource(GEOJSON_SOURCE_ID, {
     type: "geojson",
@@ -121,7 +126,7 @@ async function ensureGeojsonLayers(map: maplibregl.Map) {
     tolerance: 0.25,
   } as any);
 
-  // 3) AÃ±adir capas con IDs que la app ya usa (y una extra de conteo)
+  // 4) Añadir capas con IDs que la app ya usa (y una extra de conteo))
   map.addLayer({
     id: LAYER_CLUSTERED_CIRCLE,
     type: "circle",
@@ -189,7 +194,7 @@ async function ensureGeojsonLayers(map: maplibregl.Map) {
     },
   });
 
-  // 4) Sube tus capas arriba del todo (por si el style las tapa)
+  // 5) Sube tus capas arriba del todo (por si el style las tapa)
   const top = map.getStyle().layers?.slice(-1)[0]?.id;
   if (top) {
     for (const id of [
