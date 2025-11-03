@@ -167,27 +167,25 @@ async function ensureGeojsonLayers(map: maplibregl.Map) {
 
   map.addLayer({
     id: LAYER_UNCLUSTERED,
-    type: "circle",
+    type: "symbol",
     source: GEOJSON_SOURCE_ID,
     filter: ["!", ["has", "point_count"]],
-    paint: {
-      "circle-radius": 7,
-      "circle-color": "#e81224",
-      "circle-stroke-width": 2,
-      "circle-stroke-color": "#ffffff",
+    layout: {
+      "icon-image": "marker_yes",
+      "icon-size": 0.7,
+      "icon-allow-overlap": true,
     },
   });
 
   map.addLayer({
     id: LAYER_UNCLUSTERED_LOW_ZOOM,
-    type: "circle",
+    type: "symbol",
     source: GEOJSON_SOURCE_ID,
     filter: ["!", ["has", "point_count"]],
-    paint: {
-      "circle-radius": 5,
-      "circle-color": "#e81224",
-      "circle-stroke-width": 1.5,
-      "circle-stroke-color": "#ffffff",
+    layout: {
+      "icon-image": "marker_yes",
+      "icon-size": 0.5,
+      "icon-allow-overlap": true,
     },
   });
 
