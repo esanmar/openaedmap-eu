@@ -493,10 +493,46 @@ const MapView: FC<MapViewProps> = ({ openChangesetId, setOpenChangesetId }) => {
         return;
       }
 
-      // Popup sencillo con info bÃ¡sica (nombre/direcciÃ³n/ubicaciÃ³n)
+      // Datos del GeoJSON local: mostrar sidebar completo con botones de navegación
       const [lng, lat] = (feat.geometry?.coordinates || []) as [number, number];
-      const html = buildPopupHtml(props);
-      new maplibregl.Popup().setLngLat([lng, lat]).setHTML(html).addTo(mapRef.current);
+      if (lng && lat) {
+        // Crear objeto DefibrillatorData compatible con el sidebar
+        const localData: DefibrillatorData = {
+          osmId: props.codigo_dea || props.id || "local",
+          osmType: "node",
+          lat: lat,
+          lon: lng,
+          tags: {
+            emergency: "defibrillator",
+            name: props.organismo || props.name || "",
+            operator: props.organismo || props.operator || "",
+            "addr:full": [props.direccion, props.municipio, props.provincia].filter(Boolean).join(", ") || props.address || "",
+            "defibrillator:location": props.ubicacion || props["defibrillator:location"] || "",
+            opening_hours: props.horario || props.opening_hours || "",
+            phone: props.telefono || props.phone || "",
+            description: props.descripcion || props.description || "",
+            model: props.modelo || props.model || "",
+            ref: props.codigo_dea || props.ref || "",
+          },
+          timezoneOffsetUTCMinutes: 60, // UTC+1 para España
+          version: "1",
+        };
+
+        // Zoom y centrar en el punto
+        const zoomLevelForDetailedView = 17;
+        const currentZoomLevel = mapRef.current.getZoom();
+        if (currentZoomLevel < zoomLevelForDetailedView) {
+          mapRef.current.easeTo({
+            zoom: zoomLevelForDetailedView,
+            around: { lon: lng, lat: lat },
+          });
+        }
+
+        // Mostrar sidebar con los datos
+        setSidebarData(localData);
+        setSidebarAction(SidebarAction.showDetails);
+        setSidebarLeftShown(true);
+      }
     }
 
     map.on("click", LAYER_UNCLUSTERED, showObjectWithProperties);
