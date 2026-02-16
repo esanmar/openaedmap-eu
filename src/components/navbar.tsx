@@ -8,12 +8,7 @@ const SiteNavbar: FC<SiteNavbarProps> = () => {
 		<Navbar className="has-background-success">
 			<Navbar.Brand>
 				<Navbar.Item renderAs="a" href="/" pr={1} pl={1}>
-					<img
-						alt="CCASA logo"
-						src="https://ccasa.eus/image/layout_set_logo?img_id=1611483"
-						className="ml-1"
-						style={{ maxHeight: "50px", height: "auto" }}
-					/>
+					
 				</Navbar.Item>
 				<LanguageSwitcher />
 			</Navbar.Brand>
